@@ -276,7 +276,7 @@
       return;
     }
     pairBtn.disabled = true;
-    pairBtn.textContent = 'Getting code... (up to 15s)';
+    pairBtn.textContent = 'Getting code... (up to 20s)';
     try {
       const res = await fetch('/api/pair', {
         method: 'POST',
@@ -285,7 +285,18 @@
       });
       const data = await res.json();
       if (data.code) {
-        codeArea.innerHTML = `<div class="code-display">${data.code}</div>`;
+        codeArea.innerHTML = `<div class="code-display">${data.code}</div><div class="error-msg" style="color:var(--muted)" id="expiryTimer"></div>`;
+        let secondsLeft = 60;
+        const timerEl = document.getElementById('expiryTimer');
+        const timerInterval = setInterval(() => {
+          secondsLeft--;
+          if (secondsLeft <= 0) {
+            clearInterval(timerInterval);
+            timerEl.textContent = 'Code expired - click the button to get a new one';
+            return;
+          }
+          timerEl.textContent = `Expires in ${secondsLeft}s - enter it now in WhatsApp`;
+        }, 1000);
       } else {
         pairError.textContent = data.error || 'Could not get pairing code';
       }

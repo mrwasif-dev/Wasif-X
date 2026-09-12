@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const QRCode = require('qrcode');
 const {
   default: makeWASocket,
@@ -38,8 +39,10 @@ async function startBot() {
     logger,
     printQRInTerminal: false, // QR is shown on the web page instead of the terminal
     auth: state,
-    // A browser fingerprint WhatsApp accepts reliably for both QR and pairing-code logins
-    browser: Browsers.macOS('Desktop'),
+    // Ubuntu/Chrome is the fingerprint that reliably completes pairing-code
+    // linking with WhatsApp (some other fingerprints will generate a code
+    // that WhatsApp then rejects as "incorrect")
+    browser: Browsers.ubuntu('Chrome'),
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -149,6 +152,30 @@ async function startBot() {
   });
 }
 
+// A leftover half-registered session file is the most common cause of
+// WhatsApp rejecting a pairing code as "incorrect" - wipe it and start a
+// completely clean socket right before generating a new code.
+async function resetSessionAndRestart() {
+  try {
+    if (sock) {
+      sock.ev.removeAllListeners();
+      try {
+        sock.end(undefined);
+      } catch (e) {
+        // ignore
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  try {
+    fs.rmSync(path.join(__dirname, 'session'), { recursive: true, force: true });
+  } catch (e) {
+    console.error('Could not clear old session:', e?.message || e);
+  }
+  await startBot();
+}
+
 // ---------------- Web login page API routes ----------------
 
 // Current connection status
@@ -185,6 +212,11 @@ app.post('/api/pair', async (req, res) => {
     if (cleanNumber.length < 8) {
       return res.status(400).json({ error: 'Enter a valid number with country code' });
     }
+
+    // Always start from a clean, unregistered socket before requesting a
+    // new pairing code - this avoids the "incorrect code" rejection caused
+    // by a stale/half-linked session from a previous attempt
+    await resetSessionAndRestart();
 
     // Wait for the WebSocket connection to actually be open before requesting a code
     let waited = 0;
