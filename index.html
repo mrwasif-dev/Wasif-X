@@ -158,6 +158,11 @@
     color: #ff6b6b;
     font-size: 13px;
     margin-top: 10px;
+    line-height: 1.6;
+    background: rgba(255, 107, 107, 0.1);
+    padding: 10px;
+    border-radius: 8px;
+    border-left: 3px solid #ff6b6b;
   }
 
   .success {
@@ -198,13 +203,17 @@
   <!-- Pairing Code Panel -->
   <div class="panel" id="panel-pair">
     <input type="tel" id="phoneInput" placeholder="923001234567 (with country code)" />
+    <div class="steps" style="text-align: center; margin-bottom: 12px; font-size: 12px; color: var(--muted);">
+      💡 Format: Country code + number (no +, no leading 0)<br>
+      Example: 923001234567 not +923001234567 or 03001234567
+    </div>
     <button class="primary" id="pairBtn">Get Pairing Code</button>
     <div id="codeArea"></div>
     <div class="steps">
-      1. Open WhatsApp<br>
-      2. Go to Settings ⚙️ &gt; Linked Devices &gt; Link a Device<br>
-      3. Choose "Link with phone number instead"<br>
-      4. Enter the code shown above
+      1. Open WhatsApp on this phone<br>
+      2. Settings ⚙️ &gt; Linked Devices &gt; Link a Device<br>
+      3. Tap "Link with phone number instead"<br>
+      4. Enter the 8-character code shown above
     </div>
     <div class="error-msg" id="pairError"></div>
   </div>
@@ -299,6 +308,9 @@
         }, 1000);
       } else {
         pairError.textContent = data.error || 'Could not get pairing code';
+        if (data.details) {
+          pairError.textContent += ' • ' + data.details;
+        }
       }
     } catch (e) {
       pairError.textContent = 'Could not get pairing code, please try again';

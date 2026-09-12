@@ -37,13 +37,14 @@ async function startBot() {
   sock = makeWASocket({
     version,
     logger,
-    printQRInTerminal: false, // QR is shown on the web page instead of the terminal
+    printQRInTerminal: false,
     auth: state,
-    // Use a stable browser identifier for reliable pairing code generation
-    // Windows Chrome works best for WhatsApp pairing code validation
-    browser: Browsers.windows('Chrome'),
-    // Sync app state to ensure credentials are properly stored
+    // Use Android identifier - most compatible with WhatsApp pairing codes
+    browser: Browsers.android('WhatsApp'),
+    // Disable history sync to avoid stale session data
     syncFullHistory: false,
+    // Mark device as mobile app
+    markOnlineOnConnect: true,
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -209,10 +210,23 @@ app.post('/api/pair', async (req, res) => {
     if (!number) {
       return res.status(400).json({ error: 'Phone number is required' });
     }
-    const cleanNumber = number.replace(/[^0-9]/g, '');
-    if (cleanNumber.length < 8) {
-      return res.status(400).json({ error: 'Enter a valid number with country code' });
+    
+    // Clean the number - remove all non-digits
+    let cleanNumber = number.replace(/[^0-9]/g, '');
+    
+    // Remove leading 0 if present (e.g., 03001234567 -> 923001234567)
+    if (cleanNumber.startsWith('0') && !cleanNumber.startsWith('00')) {
+      cleanNumber = '92' + cleanNumber.substring(1);
     }
+    
+    // Validate the number
+    if (cleanNumber.length < 10 || cleanNumber.length > 15) {
+      return res.status(400).json({ 
+        error: 'Invalid number. Use format like 923001234567 (with country code, no +)' 
+      });
+    }
+    
+    console.log(`📱 Pairing code requested for: ${cleanNumber}`);
 
     // Always start from a clean, unregistered socket before requesting a
     // new pairing code - this avoids the "incorrect code" rejection caused
@@ -233,32 +247,67 @@ app.post('/api/pair', async (req, res) => {
     let lastError;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        console.log(`⏳ Pairing code attempt ${attempt}/3 for ${cleanNumber}...`);
         const result = await sock.requestPairingCode(cleanNumber);
-        // Baileys returns the code in different formats depending on version
-        const code = result?.pairing_code || result?.code || result;
-        if (!code) {
-          throw new Error('No pairing code received from WhatsApp');
+        
+        // Extract code from various possible response formats
+        let code;
+        if (typeof result === 'string') {
+          code = result;
+        } else if (result?.pairing_code) {
+          code = result.pairing_code;
+        } else if (result?.code) {
+          code = result.code;
+        } else {
+          throw new Error('Invalid response format from WhatsApp');
         }
+        
+        if (!code || code.length < 4) {
+          throw new Error('Received invalid code from WhatsApp');
+        }
+        
+        console.log(`✅ Code generated successfully: ${code}`);
         return res.json({ code });
       } catch (err) {
         lastError = err;
-        console.error(`Pairing code attempt ${attempt} failed:`, err?.message || err);
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 1500));
+        const errMsg = err?.message || String(err);
+        console.error(`❌ Attempt ${attempt} failed:`, errMsg);
+        if (attempt < 3) {
+          console.log(`⏱️  Waiting 2 seconds before retry...`);
+          await new Promise((r) => setTimeout(r, 2000));
+        }
       }
     }
+    
+    console.error(`🚨 All 3 attempts failed. Last error:`, lastError?.message || lastError);
     throw lastError;
   } catch (e) {
-    console.error('Pairing code error:', e?.message || e);
+    console.error('🔴 Pairing code error:', e?.message || e);
     const errorMsg = e?.message || String(e);
-    let userMessage = 'Could not get pairing code. Make sure the number includes the country code (no + or 0), then try again.';
+    let userMessage = 'Could not get pairing code.';
+    let suggestion = 'Try these:';
     
-    if (errorMsg.includes('401') || errorMsg.includes('401')) {
-      userMessage = 'WhatsApp rejected the pairing code request. Please try again in a moment.';
-    } else if (errorMsg.includes('timeout')) {
-      userMessage = 'Connection timed out. Please check your internet and try again.';
+    // Provide specific error guidance
+    if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
+      userMessage = 'WhatsApp rejected the request. Phone number may be incorrect.';
+      suggestion = 'Tips: Use format 923001234567 (no + or 0 prefix). Double-check the number.';
+    } else if (errorMsg.includes('timeout') || errorMsg.includes('ECONNREFUSED')) {
+      userMessage = 'Connection error - WhatsApp servers not responding.';
+      suggestion = 'Check your internet connection and try again in a moment.';
+    } else if (errorMsg.includes('429') || errorMsg.includes('rate')) {
+      userMessage = 'Too many requests. WhatsApp rate-limited us.';
+      suggestion = 'Wait 1-2 minutes and try again.';
+    } else if (errorMsg.includes('stale') || errorMsg.includes('session')) {
+      userMessage = 'Session issue detected.';
+      suggestion = 'Delete session/ folder and restart the app.';
+    } else {
+      suggestion = 'Make sure: 1) Number format is 923001234567 2) Internet is working 3) WhatsApp account exists';
     }
     
-    res.status(500).json({ error: userMessage });
+    res.status(500).json({ 
+      error: userMessage,
+      details: suggestion 
+    });
   }
 });
 
