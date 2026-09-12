@@ -2,9 +2,6 @@ const mongoose = require('mongoose');
 const { BufferJSON } = require('@whiskeysockets/baileys');
 
 // ============ Session Schema (Baileys Auth) ============
-// Keep Baileys auth data as JSON strings. BufferJSON preserves Buffer values
-// exactly, avoiding BSON type conversions that can cause Signal "Bad MAC"
-// errors when a Heroku dyno restarts.
 const sessionSchema = new mongoose.Schema(
   {
     sessionId: {
@@ -14,11 +11,8 @@ const sessionSchema = new mongoose.Schema(
       index: true,
     },
     jid: String,
-    credsJson: { type: String, default: null },
-    keysJson: { type: String, default: null },
-    // Legacy fields kept temporarily so an old document can be read once.
-    creds: mongoose.Schema.Types.Mixed,
-    keys: mongoose.Schema.Types.Mixed,
+    creds: mongoose.Schema.Types.Mixed, // Baileys credentials
+    keys: mongoose.Schema.Types.Mixed, // Baileys Signal/Noise keys
     lastUpdated: {
       type: Date,
       default: Date.now,
@@ -26,6 +20,8 @@ const sessionSchema = new mongoose.Schema(
   },
   { collection: 'sessions', timestamps: true }
 );
+
+// Do not expire WhatsApp sessions automatically. A valid linked session must survive Heroku restarts.
 
 const Session = mongoose.model('Session', sessionSchema);
 
@@ -131,25 +127,8 @@ async function loadSession(sessionId) {
   try {
     const session = await Session.findOne({ sessionId }).lean();
     if (!session) return null;
-
-    let creds = null;
-    let keys = {};
-
-    if (session.credsJson) {
-      creds = JSON.parse(session.credsJson, BufferJSON.reviver);
-    } else if (session.creds) {
-      // One-time compatibility with the previous Mixed-field format.
-      creds = JSON.parse(JSON.stringify(session.creds), BufferJSON.reviver);
-    }
-
-    if (session.keysJson) {
-      keys = JSON.parse(session.keysJson, BufferJSON.reviver) || {};
-    } else if (session.keys) {
-      keys = JSON.parse(JSON.stringify(session.keys), BufferJSON.reviver) || {};
-    }
-
     console.log(`✅ Loaded MongoDB auth state for: ${sessionId}`);
-    return { creds, keys };
+    return { creds: session.creds || null, keys: session.keys || {} };
   } catch (err) {
     console.error('Error loading auth state:', err);
     return null;
@@ -159,22 +138,17 @@ async function loadSession(sessionId) {
 // Save the complete Baileys authentication state
 async function saveSession(sessionId, creds, keys) {
   try {
-    const credsJson = JSON.stringify(creds, BufferJSON.replacer);
-    const keysJson = JSON.stringify(keys, BufferJSON.replacer);
-
+    // Store Baileys buffers as JSON-safe values so MongoDB can restore them exactly.
+    const safeCreds = JSON.parse(JSON.stringify(creds, BufferJSON.replacer));
+    const safeKeys = JSON.parse(JSON.stringify(keys, BufferJSON.replacer));
     await Session.findOneAndUpdate(
       { sessionId },
       {
         $set: {
           sessionId,
-          credsJson,
-          keysJson,
+          creds: safeCreds,
+          keys: safeKeys,
           lastUpdated: new Date(),
-        },
-        // Remove the old Mixed auth fields after the first successful save.
-        $unset: {
-          creds: 1,
-          keys: 1,
         },
       },
       { upsert: true, setDefaultsOnInsert: true }
@@ -317,6 +291,8 @@ module.exports = {
   MessageLog,
   
   // Session functions
+  saveSession,
+  loadSession,
   saveSessionCreds,
   loadSessionCreds,
   deleteSession,
