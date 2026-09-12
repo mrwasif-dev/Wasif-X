@@ -112,13 +112,17 @@ async function startBot() {
         connectionState = 'disconnected';
         db.updateConnectionStatus(SESSION_ID, false).catch(() => {});
 
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const statusCode = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.data?.statusCode || lastDisconnect?.error?.statusCode;
         const loggedOut = statusCode === DisconnectReason.loggedOut;
 
         if (loggedOut) {
           connectionState = 'logged_out';
           reconnectAttempts = 0;
-          console.log('🚪 WhatsApp session logged out. Automatic reconnect disabled.');
+          console.log('🚪 WhatsApp session logged out. Clearing invalid auth state.');
+          // A 401/logged-out session can never reconnect with the same Signal
+          // credentials. Remove it so the next start exposes a clean pairing
+          // state instead of looping forever with rejected credentials.
+          db.deleteSession(SESSION_ID).catch(() => {});
         } else if (!intentionalRestart) {
           console.log(`❌ Connection closed (code ${statusCode || 'unknown'}).`);
           scheduleReconnect('WhatsApp connection closed');
@@ -470,4 +474,16 @@ process.on('unhandledRejection', (err) => {
 
 process.on('uncaughtException', (err) => {
   console.error('🚨 Uncaught exception:', err?.stack || err);
+});
+
+process.on('SIGTERM', async () => {
+  try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch (_) {}
+  try { await stopSocket(); } catch (_) {}
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch (_) {}
+  try { await stopSocket(); } catch (_) {}
+  process.exit(0);
 });

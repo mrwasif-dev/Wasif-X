@@ -95,7 +95,6 @@ const messageLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
-      index: true,
     },
     isCommand: Boolean,
     command: String,
@@ -109,6 +108,11 @@ messageLogSchema.index({ timestamp: 1 }, { expireAfterSeconds: 7776000 });
 const MessageLog = mongoose.model('MessageLog', messageLogSchema);
 
 // ============ Database Connection ============
+function getConnectionState() {
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  return states[mongoose.connection.readyState] || 'unknown';
+}
+
 async function connectDB() {
   try {
     const mongoUri = process.env.MONGODB_URI;
@@ -339,6 +343,7 @@ async function getMessageLogs(sessionId, limit = 50) {
 module.exports = {
   // Connection
   connectDB,
+  getConnectionState,
   
   // Models
   Session,
