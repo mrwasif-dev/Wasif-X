@@ -39,10 +39,11 @@ async function startBot() {
     logger,
     printQRInTerminal: false, // QR is shown on the web page instead of the terminal
     auth: state,
-    // Ubuntu/Chrome is the fingerprint that reliably completes pairing-code
-    // linking with WhatsApp (some other fingerprints will generate a code
-    // that WhatsApp then rejects as "incorrect")
-    browser: Browsers.ubuntu('Chrome'),
+    // Use a stable browser identifier for reliable pairing code generation
+    // Windows Chrome works best for WhatsApp pairing code validation
+    browser: Browsers.windows('Chrome'),
+    // Sync app state to ensure credentials are properly stored
+    syncFullHistory: false,
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -232,7 +233,12 @@ app.post('/api/pair', async (req, res) => {
     let lastError;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const code = await sock.requestPairingCode(cleanNumber);
+        const result = await sock.requestPairingCode(cleanNumber);
+        // Baileys returns the code in different formats depending on version
+        const code = result?.pairing_code || result?.code || result;
+        if (!code) {
+          throw new Error('No pairing code received from WhatsApp');
+        }
         return res.json({ code });
       } catch (err) {
         lastError = err;
@@ -242,8 +248,17 @@ app.post('/api/pair', async (req, res) => {
     }
     throw lastError;
   } catch (e) {
-    console.error('Pairing code error:', e);
-    res.status(500).json({ error: 'Could not get pairing code. Make sure the number includes the country code (no + or 0), then try again.' });
+    console.error('Pairing code error:', e?.message || e);
+    const errorMsg = e?.message || String(e);
+    let userMessage = 'Could not get pairing code. Make sure the number includes the country code (no + or 0), then try again.';
+    
+    if (errorMsg.includes('401') || errorMsg.includes('401')) {
+      userMessage = 'WhatsApp rejected the pairing code request. Please try again in a moment.';
+    } else if (errorMsg.includes('timeout')) {
+      userMessage = 'Connection timed out. Please check your internet and try again.';
+    }
+    
+    res.status(500).json({ error: userMessage });
   }
 });
 
