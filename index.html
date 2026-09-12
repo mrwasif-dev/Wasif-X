@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ur" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wasif-X | لاگ ان</title>
+<style>
+  :root {
+    --green: #25D366;
+    --green-dark: #128C7E;
+    --bg: #0b141a;
+    --card: #111b21;
+    --text: #e9edef;
+    --muted: #8696a0;
+    --border: #2a3942;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: radial-gradient(circle at top, #16232a, var(--bg));
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 32px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    text-align: center;
+  }
+  .logo {
+    width: 64px;
+    height: 64px;
+    background: var(--green);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    font-size: 30px;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+  .tabs {
+    display: flex;
+    background: #0b141a;
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 24px;
+    border: 1px solid var(--border);
+  }
+  .tab {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: 0.2s;
+  }
+  .tab.active {
+    background: var(--green);
+    color: #04120c;
+    font-weight: 600;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .qr-box {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px;
+    width: 240px;
+    height: 240px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .qr-box img { width: 100%; height: 100%; }
+  .qr-box .loading {
+    color: #333;
+    font-size: 13px;
+  }
+  .steps {
+    text-align: right;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.9;
+    background: #0b141a;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-top: 8px;
+  }
+
+  input[type="tel"] {
+    width: 100%;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #0b141a;
+    color: var(--text);
+    font-size: 15px;
+    margin-bottom: 14px;
+    text-align: center;
+    direction: ltr;
+  }
+  input[type="tel"]:focus { outline: 2px solid var(--green); }
+
+  button.primary {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: var(--green);
+    color: #04120c;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button.primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .code-display {
+    font-size: 32px;
+    letter-spacing: 6px;
+    font-weight: 800;
+    background: #0b141a;
+    border: 1px dashed var(--green);
+    border-radius: 12px;
+    padding: 18px;
+    margin: 16px 0;
+    color: var(--green);
+    direction: ltr;
+  }
+
+  .error-msg {
+    color: #ff6b6b;
+    font-size: 13px;
+    margin-top: 10px;
+  }
+
+  .success {
+    display: none;
+  }
+  .success.active {
+    display: block;
+  }
+  .success .logo { font-size: 40px; }
+  .success h1 { color: var(--green); }
+</style>
+</head>
+<body>
+
+<div class="card" id="loginCard">
+  <div class="logo">🤖</div>
+  <h1>Wasif-X</h1>
+  <div class="subtitle">اپنے واٹس ایپ سے بوٹ کو لاگ ان کریں</div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="qr">QR کوڈ</button>
+    <button class="tab" data-tab="pair">Pairing Code</button>
+  </div>
+
+  <!-- QR Code Panel -->
+  <div class="panel active" id="panel-qr">
+    <div class="qr-box" id="qrBox">
+      <span class="loading">QR کوڈ لوڈ ہو رہا ہے...</span>
+    </div>
+    <div class="steps">
+      1. واٹس ایپ کھولیں<br>
+      2. Settings ⚙️ &gt; Linked Devices پر جائیں<br>
+      3. "Link a Device" پر ٹیپ کریں<br>
+      4. اوپر دیا گیا QR کوڈ سکین کریں
+    </div>
+  </div>
+
+  <!-- Pairing Code Panel -->
+  <div class="panel" id="panel-pair">
+    <input type="tel" id="phoneInput" placeholder="923001234567 (country code سمیت)" />
+    <button class="primary" id="pairBtn">Pairing Code حاصل کریں</button>
+    <div id="codeArea"></div>
+    <div class="steps">
+      1. واٹس ایپ کھولیں<br>
+      2. Settings ⚙️ &gt; Linked Devices &gt; Link a Device<br>
+      3. "Link with phone number instead" منتخب کریں<br>
+      4. اوپر ملنے والا کوڈ درج کریں
+    </div>
+    <div class="error-msg" id="pairError"></div>
+  </div>
+</div>
+
+<div class="card success" id="successCard">
+  <div class="logo">✅</div>
+  <h1>کنیکٹ ہو گیا!</h1>
+  <div class="subtitle">Wasif-X اب آپ کے واٹس ایپ سے کامیابی سے منسلک ہے۔ آپ یہ پیج بند کر سکتے ہیں۔</div>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  const panels = { qr: document.getElementById('panel-qr'), pair: document.getElementById('panel-pair') };
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      Object.values(panels).forEach(p => p.classList.remove('active'));
+      panels[tab.dataset.tab].classList.add('active');
+    });
+  });
+
+  const qrBox = document.getElementById('qrBox');
+  const loginCard = document.getElementById('loginCard');
+  const successCard = document.getElementById('successCard');
+
+  async function checkStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      if (data.connected) {
+        loginCard.style.display = 'none';
+        successCard.classList.add('active');
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  async function loadQR() {
+    const connected = await checkStatus();
+    if (connected) return;
+    try {
+      const res = await fetch('/api/qr');
+      const data = await res.json();
+      if (data.qr) {
+        qrBox.innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
+      } else if (!data.connected) {
+        qrBox.innerHTML = `<span class="loading">QR کوڈ تیار ہو رہا ہے...</span>`;
+      }
+    } catch (e) {
+      qrBox.innerHTML = `<span class="loading">کنکشن میں مسئلہ، دوبارہ کوشش ہو رہی ہے...</span>`;
+    }
+  }
+
+  const pairBtn = document.getElementById('pairBtn');
+  const phoneInput = document.getElementById('phoneInput');
+  const codeArea = document.getElementById('codeArea');
+  const pairError = document.getElementById('pairError');
+
+  pairBtn.addEventListener('click', async () => {
+    pairError.textContent = '';
+    codeArea.innerHTML = '';
+    const number = phoneInput.value.trim();
+    if (!number) {
+      pairError.textContent = 'براہ کرم نمبر درج کریں';
+      return;
+    }
+    pairBtn.disabled = true;
+    pairBtn.textContent = 'کوڈ حاصل کیا جا رہا ہے...';
+    try {
+      const res = await fetch('/api/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number }),
+      });
+      const data = await res.json();
+      if (data.code) {
+        codeArea.innerHTML = `<div class="code-display">${data.code}</div>`;
+      } else {
+        pairError.textContent = data.error || 'کوڈ حاصل نہیں ہو سکا';
+      }
+    } catch (e) {
+      pairError.textContent = 'کوڈ حاصل نہیں ہو سکا، دوبارہ کوشش کریں';
+    }
+    pairBtn.disabled = false;
+    pairBtn.textContent = 'Pairing Code حاصل کریں';
+  });
+
+  // ہر 4 سیکنڈ بعد QR اور کنکشن کی صورتحال چیک کریں
+  loadQR();
+  setInterval(loadQR, 4000);
+</script>
+
+</body>
+</html>
