@@ -17,7 +17,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// روٹ پیج - لاگ ان پیج (index.html) براہِ راست دکھائیں
+// Root page - serves the login page (index.html) directly
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -33,7 +33,7 @@ async function startBot() {
   sock = makeWASocket({
     version,
     logger,
-    printQRInTerminal: false, // QR اب ویب پیج پر دکھایا جائے گا، ٹرمینل میں نہیں
+    printQRInTerminal: false, // QR is shown on the web page instead of the terminal
     auth: state,
     browser: [config.BOT_NAME, 'Chrome', '1.0.0'],
   });
@@ -50,20 +50,20 @@ async function startBot() {
       currentQR = null;
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('❌ کنکشن بند ہو گیا۔ دوبارہ کوشش:', shouldReconnect);
+      console.log('❌ Connection closed. Reconnecting:', shouldReconnect);
       if (shouldReconnect) {
         startBot();
       }
     } else if (connection === 'open') {
       isConnected = true;
       currentQR = null;
-      console.log(`✅ ${config.BOT_NAME} کامیابی سے کنیکٹ ہو گیا ہے!`);
+      console.log(`✅ ${config.BOT_NAME} connected successfully!`);
     }
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  // پیغامات کا جواب دینے کی لاجک
+  // Message handling logic
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
@@ -83,7 +83,7 @@ async function startBot() {
       ? body.slice(config.PREFIX.length).trim().split(/ +/)[0].toLowerCase()
       : '';
 
-    console.log(`📩 پیغام موصول ہوا [${from}]: ${body}`);
+    console.log(`📩 Message received [${from}]: ${body}`);
 
     if (!isCmd) return;
 
@@ -93,7 +93,7 @@ async function startBot() {
           const start = Date.now();
           await sock.sendMessage(from, { text: '🏓 Pong!' }, { quoted: msg });
           const end = Date.now();
-          await sock.sendMessage(from, { text: `⚡ سپیڈ: ${end - start}ms` });
+          await sock.sendMessage(from, { text: `⚡ Speed: ${end - start}ms` });
           break;
         }
 
@@ -101,10 +101,10 @@ async function startBot() {
         case 'help': {
           const menuText = `╭───「 *${config.BOT_NAME}* 」
 │
-│ ${config.PREFIX}ping   - بوٹ کی سپیڈ چیک کریں
-│ ${config.PREFIX}menu   - یہ مینو دیکھیں
-│ ${config.PREFIX}alive  - چیک کریں بوٹ آن ہے یا نہیں
-│ ${config.PREFIX}owner  - اونر کی معلومات
+│ ${config.PREFIX}ping   - Check bot speed
+│ ${config.PREFIX}menu   - Show this menu
+│ ${config.PREFIX}alive  - Check if the bot is online
+│ ${config.PREFIX}owner  - Get owner info
 │
 ╰────────────────`;
           await sock.sendMessage(from, { text: menuText }, { quoted: msg });
@@ -114,7 +114,7 @@ async function startBot() {
         case 'alive': {
           await sock.sendMessage(
             from,
-            { text: `✅ *${config.BOT_NAME}* آن لائن اور فعال ہے!` },
+            { text: `✅ *${config.BOT_NAME}* is online and active!` },
             { quoted: msg }
           );
           break;
@@ -123,7 +123,7 @@ async function startBot() {
         case 'owner': {
           await sock.sendMessage(
             from,
-            { text: `👤 اونر نمبر: wa.me/${config.OWNER_NUMBER}` },
+            { text: `👤 Owner number: wa.me/${config.OWNER_NUMBER}` },
             { quoted: msg }
           );
           break;
@@ -132,25 +132,25 @@ async function startBot() {
         default: {
           await sock.sendMessage(
             from,
-            { text: `❓ نامعلوم کمانڈ۔ مینو دیکھنے کے لیے *${config.PREFIX}menu* لکھیں۔` },
+            { text: `❓ Unknown command. Type *${config.PREFIX}menu* to see the list.` },
             { quoted: msg }
           );
         }
       }
     } catch (err) {
-      console.error('کمانڈ چلاتے وقت خرابی:', err);
+      console.error('Error running command:', err);
     }
   });
 }
 
-// ---------------- ویب لاگ ان پیج کے API روٹس ----------------
+// ---------------- Web login page API routes ----------------
 
-// کنکشن کی موجودہ صورتحال
+// Current connection status
 app.get('/api/status', (req, res) => {
   res.json({ connected: isConnected, botName: config.BOT_NAME });
 });
 
-// QR کوڈ (تصویر کی شکل میں) حاصل کرنا
+// Get QR code as an image
 app.get('/api/qr', async (req, res) => {
   if (isConnected) return res.json({ connected: true, qr: null });
   if (!currentQR) return res.json({ connected: false, qr: null });
@@ -158,37 +158,37 @@ app.get('/api/qr', async (req, res) => {
     const dataUrl = await QRCode.toDataURL(currentQR);
     res.json({ connected: false, qr: dataUrl });
   } catch (e) {
-    res.status(500).json({ error: 'QR بنانے میں خرابی ہوئی' });
+    res.status(500).json({ error: 'Failed to generate QR code' });
   }
 });
 
-// فون نمبر سے Pairing Code حاصل کرنا
+// Request a pairing code using a phone number
 app.post('/api/pair', async (req, res) => {
   try {
     if (isConnected) {
-      return res.status(400).json({ error: 'بوٹ پہلے سے کنیکٹ ہے' });
+      return res.status(400).json({ error: 'Bot is already connected' });
     }
     if (!sock) {
-      return res.status(400).json({ error: 'بوٹ ابھی تیار نہیں، تھوڑی دیر بعد کوشش کریں' });
+      return res.status(400).json({ error: 'Bot is not ready yet, please try again shortly' });
     }
     const { number } = req.body;
     if (!number) {
-      return res.status(400).json({ error: 'نمبر درکار ہے' });
+      return res.status(400).json({ error: 'Phone number is required' });
     }
     const cleanNumber = number.replace(/[^0-9]/g, '');
     if (cleanNumber.length < 8) {
-      return res.status(400).json({ error: 'درست نمبر درج کریں (country code کے ساتھ)' });
+      return res.status(400).json({ error: 'Enter a valid number with country code' });
     }
     const code = await sock.requestPairingCode(cleanNumber);
     res.json({ code });
   } catch (e) {
-    console.error('Pairing کوڈ کی خرابی:', e);
-    res.status(500).json({ error: 'کوڈ حاصل نہیں ہو سکا، دوبارہ کوشش کریں' });
+    console.error('Pairing code error:', e);
+    res.status(500).json({ error: 'Could not get pairing code, please try again' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🌐 ${config.BOT_NAME} لاگ ان پیج یہاں کھلا ہے: http://localhost:${PORT}`);
+  console.log(`🌐 ${config.BOT_NAME} login page is live at: http://localhost:${PORT}`);
 });
 
 startBot();

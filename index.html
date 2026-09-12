@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ur" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Wasif-X | لاگ ان</title>
+<title>Wasif-X | Login</title>
 <style>
   :root {
     --green: #25D366;
@@ -101,7 +101,7 @@
     font-size: 13px;
   }
   .steps {
-    text-align: right;
+    text-align: left;
     font-size: 13px;
     color: var(--muted);
     line-height: 1.9;
@@ -122,7 +122,6 @@
     font-size: 15px;
     margin-bottom: 14px;
     text-align: center;
-    direction: ltr;
   }
   input[type="tel"]:focus { outline: 2px solid var(--green); }
 
@@ -153,7 +152,6 @@
     padding: 18px;
     margin: 16px 0;
     color: var(--green);
-    direction: ltr;
   }
 
   .error-msg {
@@ -177,36 +175,36 @@
 <div class="card" id="loginCard">
   <div class="logo">🤖</div>
   <h1>Wasif-X</h1>
-  <div class="subtitle">اپنے واٹس ایپ سے بوٹ کو لاگ ان کریں</div>
+  <div class="subtitle">Log in to the bot with your WhatsApp</div>
 
   <div class="tabs">
-    <button class="tab active" data-tab="qr">QR کوڈ</button>
+    <button class="tab active" data-tab="qr">QR Code</button>
     <button class="tab" data-tab="pair">Pairing Code</button>
   </div>
 
   <!-- QR Code Panel -->
   <div class="panel active" id="panel-qr">
     <div class="qr-box" id="qrBox">
-      <span class="loading">QR کوڈ لوڈ ہو رہا ہے...</span>
+      <span class="loading">Loading QR code...</span>
     </div>
     <div class="steps">
-      1. واٹس ایپ کھولیں<br>
-      2. Settings ⚙️ &gt; Linked Devices پر جائیں<br>
-      3. "Link a Device" پر ٹیپ کریں<br>
-      4. اوپر دیا گیا QR کوڈ سکین کریں
+      1. Open WhatsApp<br>
+      2. Go to Settings ⚙️ &gt; Linked Devices<br>
+      3. Tap "Link a Device"<br>
+      4. Scan the QR code above
     </div>
   </div>
 
   <!-- Pairing Code Panel -->
   <div class="panel" id="panel-pair">
-    <input type="tel" id="phoneInput" placeholder="923001234567 (country code سمیت)" />
-    <button class="primary" id="pairBtn">Pairing Code حاصل کریں</button>
+    <input type="tel" id="phoneInput" placeholder="923001234567 (with country code)" />
+    <button class="primary" id="pairBtn">Get Pairing Code</button>
     <div id="codeArea"></div>
     <div class="steps">
-      1. واٹس ایپ کھولیں<br>
-      2. Settings ⚙️ &gt; Linked Devices &gt; Link a Device<br>
-      3. "Link with phone number instead" منتخب کریں<br>
-      4. اوپر ملنے والا کوڈ درج کریں
+      1. Open WhatsApp<br>
+      2. Go to Settings ⚙️ &gt; Linked Devices &gt; Link a Device<br>
+      3. Choose "Link with phone number instead"<br>
+      4. Enter the code shown above
     </div>
     <div class="error-msg" id="pairError"></div>
   </div>
@@ -214,8 +212,8 @@
 
 <div class="card success" id="successCard">
   <div class="logo">✅</div>
-  <h1>کنیکٹ ہو گیا!</h1>
-  <div class="subtitle">Wasif-X اب آپ کے واٹس ایپ سے کامیابی سے منسلک ہے۔ آپ یہ پیج بند کر سکتے ہیں۔</div>
+  <h1>Connected!</h1>
+  <div class="subtitle">Wasif-X is now successfully linked to your WhatsApp. You can close this page.</div>
 </div>
 
 <script>
@@ -257,10 +255,10 @@
       if (data.qr) {
         qrBox.innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
       } else if (!data.connected) {
-        qrBox.innerHTML = `<span class="loading">QR کوڈ تیار ہو رہا ہے...</span>`;
+        qrBox.innerHTML = `<span class="loading">Generating QR code...</span>`;
       }
     } catch (e) {
-      qrBox.innerHTML = `<span class="loading">کنکشن میں مسئلہ، دوبارہ کوشش ہو رہی ہے...</span>`;
+      qrBox.innerHTML = `<span class="loading">Connection issue, retrying...</span>`;
     }
   }
 
@@ -274,11 +272,11 @@
     codeArea.innerHTML = '';
     const number = phoneInput.value.trim();
     if (!number) {
-      pairError.textContent = 'براہ کرم نمبر درج کریں';
+      pairError.textContent = 'Please enter a phone number';
       return;
     }
     pairBtn.disabled = true;
-    pairBtn.textContent = 'کوڈ حاصل کیا جا رہا ہے...';
+    pairBtn.textContent = 'Getting code...';
     try {
       const res = await fetch('/api/pair', {
         method: 'POST',
@@ -289,16 +287,16 @@
       if (data.code) {
         codeArea.innerHTML = `<div class="code-display">${data.code}</div>`;
       } else {
-        pairError.textContent = data.error || 'کوڈ حاصل نہیں ہو سکا';
+        pairError.textContent = data.error || 'Could not get pairing code';
       }
     } catch (e) {
-      pairError.textContent = 'کوڈ حاصل نہیں ہو سکا، دوبارہ کوشش کریں';
+      pairError.textContent = 'Could not get pairing code, please try again';
     }
     pairBtn.disabled = false;
-    pairBtn.textContent = 'Pairing Code حاصل کریں';
+    pairBtn.textContent = 'Get Pairing Code';
   });
 
-  // ہر 4 سیکنڈ بعد QR اور کنکشن کی صورتحال چیک کریں
+  // Poll QR code and connection status every 4 seconds
   loadQR();
   setInterval(loadQR, 4000);
 </script>

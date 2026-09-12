@@ -1,18 +1,18 @@
 # 🤖 Wasif-X
 
-ایک سادہ (Simple) واٹس ایپ بوٹ — بنایا گیا **Node.js** اور **Baileys** لائبریری سے۔
-اب لاگ ان کرنے کے لیے ایک **ویب پیج** بھی شامل ہے — نہ ٹرمینل دیکھنے کی ضرورت، نہ لاگز کی۔
+A simple WhatsApp bot built with **Node.js** and the **Baileys** library.
+It includes a **web login page** — no need to check the terminal or logs to connect.
 
-## ✨ فیچرز
-- `.ping` — بوٹ کی سپیڈ چیک کریں
-- `.menu` — کمانڈز کی لسٹ دیکھیں
-- `.alive` — بوٹ آن ہے یا نہیں چیک کریں
-- `.owner` — اونر کا نمبر دیکھیں
-- 🌐 **ویب لاگ ان پیج** — براؤزر میں کھول کر QR کوڈ یا Pairing Code سے لاگ ان کریں
+## ✨ Features
+- `.ping` — check bot speed
+- `.menu` — show the list of commands
+- `.alive` — check if the bot is online
+- `.owner` — get the owner's contact
+- 🌐 **Web login page** — open it in your browser and log in with a QR code or a pairing code
 
 ---
 
-## 🖥️ لوکل کمپیوٹر پر چلانا
+## 🖥️ Running Locally
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/wasif-x.git
@@ -21,20 +21,20 @@ npm install
 npm start
 ```
 
-اب براؤزر میں یہ کھولیں:
+Now open this in your browser:
 ```
 http://localhost:3000
 ```
 
-اس پیج پر دو ٹیب ملیں گے:
-- **QR کوڈ** — سیدھا سکین کر کے لاگ ان کریں
-- **Pairing Code** — اپنا نمبر (country code سمیت) لکھ کر کوڈ حاصل کریں اور واٹس ایپ میں درج کریں
+The page has two tabs:
+- **QR Code** — scan it directly with WhatsApp to log in
+- **Pairing Code** — enter your number (with country code) to get a code and enter it in WhatsApp
 
-جیسے ہی کنکشن مکمل ہو جائے، وہی پیج خودکار طور پر "✅ کنیکٹ ہو گیا!" دکھا دے گا۔
+Once the connection succeeds, the same page automatically shows "✅ Connected!".
 
 ---
 
-## 📤 GitHub پر اپلوڈ کرنا
+## 📤 Pushing to GitHub
 
 ```bash
 cd wasif-x
@@ -46,15 +46,14 @@ git remote add origin https://github.com/YOUR_USERNAME/wasif-x.git
 git push -u origin main
 ```
 
-> ⚠️ نوٹ: `session/` اور `.env` فولڈر/فائل کبھی گٹ ہب پر اپلوڈ نہ کریں —
-> یہ آپ کے واٹس ایپ اکاؤنٹ کا لاگ ان ڈیٹا رکھتے ہیں۔ `.gitignore` میں یہ
-> پہلے سے شامل ہیں۔
+> ⚠️ Note: never push the `session/` folder or the `.env` file to GitHub —
+> they hold your WhatsApp login data. Both are already listed in `.gitignore`.
 
 ---
 
-## 🚀 Heroku پر ڈپلائے کرنا
+## 🚀 Deploying to Heroku
 
-### طریقہ 1: Heroku CLI سے
+### Method 1: Heroku CLI
 ```bash
 heroku login
 heroku create wasif-x-bot
@@ -64,50 +63,50 @@ heroku config:set OWNER_NUMBER="923001234567"
 git push heroku main
 ```
 
-ڈپلائے مکمل ہونے کے بعد یہ لنک براؤزر میں کھولیں:
+Once deployed, open this link in your browser:
 ```
 https://wasif-x-bot.herokuapp.com
 ```
-اور وہیں سے QR سکین کریں یا Pairing Code لے کر لاگ ان کریں۔
+and log in from there with a QR scan or a pairing code.
 
-### طریقہ 2: Heroku Dashboard سے (بغیر CLI کے)
-1. GitHub پر ریپو اپلوڈ کریں (اوپر دیکھیں)
-2. [Heroku Dashboard](https://dashboard.heroku.com/) پر جا کر **New > Create new app**
-3. **Deploy** ٹیب میں GitHub سلیکٹ کریں اور اپنی ریپو کنیکٹ کریں
-4. **Settings > Config Vars** میں یہ ویلیوز شامل کریں:
+### Method 2: Heroku Dashboard (no CLI)
+1. Push the repo to GitHub (see above)
+2. Go to the [Heroku Dashboard](https://dashboard.heroku.com/) and click **New > Create new app**
+3. In the **Deploy** tab, select GitHub and connect your repo
+4. In **Settings > Config Vars**, add these values:
    - `BOT_NAME` = Wasif-X
    - `PREFIX` = .
    - `OWNER_NUMBER` = 923xxxxxxxxx
-5. **Deploy Branch** پر کلک کریں
-6. ڈپلائے مکمل ہونے پر **"View"** بٹن دبائیں یا سیدھا
-   `https://your-app-name.herokuapp.com` براؤزر میں کھولیں — یہی آپ کا لاگ ان پیج ہے
+5. Click **Deploy Branch**
+6. Once deployed, click **"View"** or open
+   `https://your-app-name.herokuapp.com` directly in your browser — that's your login page
 
 ---
 
-## ⚠️ اہم نوٹ: سیشن اور Heroku
-Heroku کا فائل سسٹم **ephemeral** ہوتا ہے — یعنی جب بھی ایپ ری اسٹارٹ/سلیپ
-ہو گی، `session/` فولڈر ڈیلیٹ ہو جائے گا اور آپ کو ویب پیج سے دوبارہ
-QR/Pairing کوڈ سے لاگ ان کرنا پڑے گا۔ مستقل (persistent) سیشن کے لیے آگے
-چل کر ان میں سے کوئی حل استعمال کیا جا سکتا ہے:
-- سیشن کو MongoDB / Firebase میں سٹور کرنا
-- Heroku کی بجائے ایک VPS (جیسے کہ ہمیشہ آن رہنے والا سرور) استعمال کرنا
+## ⚠️ Important Note: Sessions and Heroku
+Heroku's filesystem is **ephemeral** — meaning whenever the app restarts or
+sleeps, the `session/` folder gets wiped, and you'll need to log in again
+from the web page with a new QR/pairing code. For a persistent session,
+you can later use one of these solutions:
+- Store the session in MongoDB / Firebase
+- Use a VPS instead of Heroku (an always-on server)
 
-ابھی کے لیے یہ سادہ ورژن مقامی فائل سسٹم پر سیشن رکھتا ہے، جو ٹیسٹنگ کے
-لیے بالکل ٹھیک ہے۔
+For now, this simple version stores the session on the local filesystem,
+which works fine for testing.
 
 ---
 
-## 📁 فائل اسٹرکچر
+## 📁 File Structure
 ```
 wasif-x/
-├── index.js          → Express سرور + بوٹ لاجک (QR/Pairing API سمیت)
-├── index.html        → ویب لاگ ان پیج (QR + Pairing Code UI)
-├── config.js         → سیٹنگز (نام، prefix، اونر نمبر)
-├── package.json      → dependencies کی لسٹ
-├── Procfile          → Heroku کو بتاتا ہے کہ ایپ کیسے چلانی ہے
-├── app.json          → Heroku ون-کلک ڈپلائے کنفیگ
-├── .env.example      → environment variables کی مثال
-└── .gitignore        → کن فائلوں کو گٹ سے چھپانا ہے
+├── index.js          → Express server + bot logic (including QR/Pairing API)
+├── index.html        → Web login page (QR + Pairing Code UI)
+├── config.js         → Settings (name, prefix, owner number)
+├── package.json      → List of dependencies
+├── Procfile          → Tells Heroku how to run the app
+├── app.json          → Heroku one-click deploy config
+├── .env.example      → Example environment variables
+└── .gitignore        → Which files to hide from Git
 ```
 
-بنایا گیا ❤️ کے ساتھ — **Wasif-X**
+Built with ❤️ — **Wasif-X**
