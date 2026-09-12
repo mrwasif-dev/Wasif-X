@@ -6,7 +6,6 @@ const QRCode = require('qrcode');
 const {
   default: makeWASocket,
   DisconnectReason,
-  useMultiFileAuthState,
   fetchLatestBaileysVersion,
   Browsers,
 } = require('@whiskeysockets/baileys');
@@ -388,15 +387,21 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// Start server and database
+// Start server first, then connect to MongoDB, then start Baileys.
+// This prevents the auth-state loader from querying MongoDB before the
+// connection is ready (which could otherwise leave `creds` as null).
 app.listen(PORT, async () => {
-  console.log(`🌐 ${config.BOT_NAME} login page is live at: http://localhost:${PORT}`);
-  
-  // Connect to MongoDB
+  console.log(`🌐 ${config.BOT_NAME} login page is live on port ${PORT}`);
+
   const dbConnected = await db.connectDB();
   if (!dbConnected) {
-    console.warn('⚠️  MongoDB connection failed - using fallback session storage');
+    console.error('❌ MongoDB is required for the WhatsApp auth session. Bot startup aborted.');
+    return;
+  }
+
+  try {
+    await startBot();
+  } catch (err) {
+    console.error('❌ Failed to start WhatsApp bot:', err?.stack || err);
   }
 });
-
-startBot();

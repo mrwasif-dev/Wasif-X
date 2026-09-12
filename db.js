@@ -81,7 +81,6 @@ const messageLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
-      index: true,
     },
     isCommand: Boolean,
     command: String,
@@ -103,8 +102,6 @@ async function connectDB() {
     }
 
     await mongoose.connect(mongoUri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
     });
@@ -119,17 +116,58 @@ async function connectDB() {
 
 // ============ Session Management Functions ============
 
+
+// Load the complete Baileys authentication state.
+async function loadSession(sessionId) {
+  try {
+    const session = await Session.findOne({ sessionId }).lean();
+    if (!session) return null;
+
+    return {
+      creds: session.creds || null,
+      keys: session.keys || {},
+    };
+  } catch (err) {
+    console.error('Error loading session state:', err);
+    return null;
+  }
+}
+
+// Save only credentials. Keys are persisted separately because Baileys
+// updates them frequently.
+async function saveSessionKeys(sessionId, keys) {
+  try {
+    await Session.findOneAndUpdate(
+      { sessionId },
+      {
+        $set: {
+          sessionId,
+          keys,
+          lastUpdated: new Date(),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    return true;
+  } catch (err) {
+    console.error('Error saving session keys:', err);
+    throw err;
+  }
+}
+
 // Save session credentials to MongoDB
 async function saveSessionCreds(sessionId, creds) {
   try {
     const session = await Session.findOneAndUpdate(
       { sessionId },
       {
-        sessionId,
-        creds,
-        lastUpdated: new Date(),
+        $set: {
+          sessionId,
+          creds,
+          lastUpdated: new Date(),
+        },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     return session;
   } catch (err) {
@@ -275,6 +313,8 @@ module.exports = {
   // Session functions
   saveSessionCreds,
   loadSessionCreds,
+  loadSession,
+  saveSessionKeys,
   deleteSession,
   
   // Settings functions
