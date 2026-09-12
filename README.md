@@ -83,6 +83,16 @@ and log in from there with a QR scan or a pairing code.
 
 ---
 
+---
+
+## 🔧 Troubleshooting: Pairing Code Not Working
+If clicking "Get Pairing Code" fails or gives an error, try these:
+- Enter the number as **digits only with country code**, no `+` and no leading `0` (e.g. `923001234567`, not `+92 300 1234567`)
+- Wait a few seconds after the page loads before requesting a code — the bot needs a moment to establish its connection
+- Delete the `session/` folder and restart the app if you were previously logged in or a login attempt got stuck
+- Make sure you click **"Link with phone number instead"** on the WhatsApp linking screen (not the QR scanner) before entering the code
+- The code expires in about a minute — if it doesn't work in time, just click the button again for a new one
+
 ## ⚠️ Important Note: Sessions and Heroku
 Heroku's filesystem is **ephemeral** — meaning whenever the app restarts or
 sleeps, the `session/` folder gets wiped, and you'll need to log in again

@@ -7,6 +7,7 @@ const {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
+  Browsers,
 } = require('@whiskeysockets/baileys');
 const P = require('pino');
 const config = require('./config');
@@ -25,8 +26,10 @@ app.get('/', (req, res) => {
 let sock;
 let currentQR = null;
 let isConnected = false;
+let socketReady = false; // becomes true once the WebSocket connection is actually open
 
 async function startBot() {
+  socketReady = false;
   const { state, saveCreds } = await useMultiFileAuthState('./session');
   const { version } = await fetchLatestBaileysVersion();
 
@@ -35,11 +38,13 @@ async function startBot() {
     logger,
     printQRInTerminal: false, // QR is shown on the web page instead of the terminal
     auth: state,
-    browser: [config.BOT_NAME, 'Chrome', '1.0.0'],
+    // A browser fingerprint WhatsApp accepts reliably for both QR and pairing-code logins
+    browser: Browsers.macOS('Desktop'),
   });
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
+    socketReady = true; // the WebSocket has responded, so it's safe to request a pairing code now
 
     if (qr) {
       currentQR = qr;
@@ -47,6 +52,7 @@ async function startBot() {
 
     if (connection === 'close') {
       isConnected = false;
+      socketReady = false;
       currentQR = null;
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -179,11 +185,33 @@ app.post('/api/pair', async (req, res) => {
     if (cleanNumber.length < 8) {
       return res.status(400).json({ error: 'Enter a valid number with country code' });
     }
-    const code = await sock.requestPairingCode(cleanNumber);
-    res.json({ code });
+
+    // Wait for the WebSocket connection to actually be open before requesting a code
+    let waited = 0;
+    while (!socketReady && waited < 15000) {
+      await new Promise((r) => setTimeout(r, 300));
+      waited += 300;
+    }
+    if (!socketReady) {
+      return res.status(400).json({ error: 'Connection not ready yet, please try again' });
+    }
+
+    // Retry a couple of times - WhatsApp occasionally rejects the very first attempt
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const code = await sock.requestPairingCode(cleanNumber);
+        return res.json({ code });
+      } catch (err) {
+        lastError = err;
+        console.error(`Pairing code attempt ${attempt} failed:`, err?.message || err);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    throw lastError;
   } catch (e) {
     console.error('Pairing code error:', e);
-    res.status(500).json({ error: 'Could not get pairing code, please try again' });
+    res.status(500).json({ error: 'Could not get pairing code. Make sure the number includes the country code (no + or 0), then try again.' });
   }
 });
 

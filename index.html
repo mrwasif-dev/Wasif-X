@@ -276,7 +276,7 @@
       return;
     }
     pairBtn.disabled = true;
-    pairBtn.textContent = 'Getting code...';
+    pairBtn.textContent = 'Getting code... (up to 15s)';
     try {
       const res = await fetch('/api/pair', {
         method: 'POST',
