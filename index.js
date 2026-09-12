@@ -12,12 +12,14 @@ const {
 } = require('@whiskeysockets/baileys');
 const P = require('pino');
 const config = require('./config');
+const db = require('./db');
 
 const logger = P({ level: 'silent' });
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const SESSION_ID = process.env.SESSION_ID || 'default-session';
 
 // Root page - serves the login page (index.html) directly
 app.get('/', (req, res) => {
@@ -31,16 +33,20 @@ let socketReady = false; // becomes true once the WebSocket connection is actual
 
 async function startBot() {
   socketReady = false;
-  const { state, saveCreds } = await useMultiFileAuthState('./session');
+  
+  // Use MongoDB for authentication state (works on Heroku)
+  const { useMongoAuthState } = require('./auth-state-db');
+  const authState = await useMongoAuthState(SESSION_ID);
+  const { saveCreds } = authState;
+  
   const { version } = await fetchLatestBaileysVersion();
 
   sock = makeWASocket({
     version,
     logger,
     printQRInTerminal: false,
-    auth: state,
+    auth: authState.state,
     // Windows Chrome is most reliable for pairing codes
-    // (Android is not a valid Browsers method in Baileys)
     browser: Browsers.windows('Chrome'),
     // Disable history sync to avoid stale session data
     syncFullHistory: false,
@@ -60,6 +66,7 @@ async function startBot() {
       isConnected = false;
       socketReady = false;
       currentQR = null;
+      db.updateConnectionStatus(SESSION_ID, false);
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('❌ Connection closed. Reconnecting:', shouldReconnect);
@@ -69,6 +76,10 @@ async function startBot() {
     } else if (connection === 'open') {
       isConnected = true;
       currentQR = null;
+      const jid = sock?.user?.id;
+      if (jid) {
+        db.updateConnectionStatus(SESSION_ID, true, jid);
+      }
       console.log(`✅ ${config.BOT_NAME} connected successfully!`);
     }
   });
@@ -96,6 +107,9 @@ async function startBot() {
       : '';
 
     console.log(`📩 Message received [${from}]: ${body}`);
+
+    // Log message to MongoDB
+    db.logMessage(SESSION_ID, from, body, isCmd, isCmd ? command : null);
 
     if (!isCmd) return;
 
@@ -172,18 +186,39 @@ async function resetSessionAndRestart() {
     // ignore
   }
   try {
+    // Remove old file-based session if it exists
     fs.rmSync(path.join(__dirname, 'session'), { recursive: true, force: true });
   } catch (e) {
-    console.error('Could not clear old session:', e?.message || e);
+    // Session folder might not exist on Heroku, that's okay
   }
+  
+  // Clear MongoDB session
+  try {
+    await db.deleteSession(SESSION_ID);
+    console.log('🗑️  MongoDB session cleared');
+  } catch (e) {
+    console.error('Warning: Could not clear MongoDB session:', e?.message || e);
+  }
+  
   await startBot();
 }
 
 // ---------------- Web login page API routes ----------------
 
 // Current connection status
-app.get('/api/status', (req, res) => {
-  res.json({ connected: isConnected, botName: config.BOT_NAME });
+app.get('/api/status', async (req, res) => {
+  try {
+    const settings = await db.getBotSettings(SESSION_ID);
+    res.json({ 
+      connected: isConnected, 
+      botName: config.BOT_NAME,
+      phoneNumber: settings?.phoneNumber || null,
+      lastSync: settings?.lastSync || null,
+      sessionId: SESSION_ID,
+    });
+  } catch (err) {
+    res.json({ connected: isConnected, botName: config.BOT_NAME });
+  }
 });
 
 // Get QR code as an image
@@ -312,8 +347,56 @@ app.post('/api/pair', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Get bot settings
+app.get('/api/settings', async (req, res) => {
+  try {
+    const settings = await db.getBotSettings(SESSION_ID);
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update bot settings
+app.post('/api/settings', async (req, res) => {
+  try {
+    const settings = await db.updateBotSettings(SESSION_ID, req.body);
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get message logs
+app.get('/api/logs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const logs = await db.getMessageLogs(SESSION_ID, limit);
+    res.json({ logs, total: logs.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Database health check
+app.get('/api/health', async (req, res) => {
+  res.json({
+    server: 'online',
+    connected: isConnected,
+    session: SESSION_ID,
+    mongodb: 'checking...',
+  });
+});
+
+// Start server and database
+app.listen(PORT, async () => {
   console.log(`🌐 ${config.BOT_NAME} login page is live at: http://localhost:${PORT}`);
+  
+  // Connect to MongoDB
+  const dbConnected = await db.connectDB();
+  if (!dbConnected) {
+    console.warn('⚠️  MongoDB connection failed - using fallback session storage');
+  }
 });
 
 startBot();
