@@ -1,0 +1,26 @@
+{
+  "name": "wasif-x",
+  "version": "1.0.0",
+  "description": "Wasif-X - Simple WhatsApp Bot built with Node.js and Baileys",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18.x"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "wasif-x"
+  ],
+  "author": "Wasif",
+  "license": "MIT",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "pino": "^9.3.2",
+    "qrcode-terminal": "^0.12.0",
+    "dotenv": "^16.4.5"
+  }
+}

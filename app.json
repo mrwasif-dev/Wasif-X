@@ -1,0 +1,31 @@
+{
+  "name": "Wasif-X",
+  "description": "Wasif-X - سمپل واٹس ایپ بوٹ (Node.js + Baileys)",
+  "repository": "https://github.com/YOUR_USERNAME/wasif-x",
+  "logo": "https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/Media/logo.png",
+  "keywords": ["whatsapp", "bot", "nodejs", "baileys"],
+  "env": {
+    "BOT_NAME": {
+      "description": "بوٹ کا نام",
+      "value": "Wasif-X"
+    },
+    "PREFIX": {
+      "description": "کمانڈز کا prefix (مثال: . یا !)",
+      "value": "."
+    },
+    "OWNER_NUMBER": {
+      "description": "اونر کا واٹس ایپ نمبر (country code کے ساتھ، + کے بغیر)",
+      "value": "923000000000"
+    },
+    "USE_PAIRING_CODE": {
+      "description": "true رکھیں اگر pairing code استعمال کرنا ہو، false رکھیں QR کے لیے",
+      "value": "false"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1
+    }
+  },
+  "stack": "heroku-22"
+}
