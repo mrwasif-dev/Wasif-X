@@ -1,3 +1,7 @@
+require('dotenv').config();
+const express = require('express');
+const path = require('path');
+const QRCode = require('qrcode');
 const {
   default: makeWASocket,
   DisconnectReason,
@@ -5,61 +9,45 @@ const {
   fetchLatestBaileysVersion,
 } = require('@whiskeysockets/baileys');
 const P = require('pino');
-const qrcode = require('qrcode-terminal');
-const readline = require('readline');
-const http = require('http');
 const config = require('./config');
 
-// Heroku کے لیے ایک چھوٹا سا HTTP سرور (health check کے لیے، ورنہ web dyno سو جاتا ہے)
-const PORT = process.env.PORT || 3000;
-http
-  .createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`${config.BOT_NAME} is running ✅`);
-  })
-  .listen(PORT, () => console.log(`🌐 HTTP سرور پورٹ ${PORT} پر چل رہا ہے`));
-
 const logger = P({ level: 'silent' });
+const app = express();
+app.use(express.json());
 
-const question = (text) =>
-  new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(text, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
-  });
+const PORT = process.env.PORT || 3000;
+
+// روٹ پیج - لاگ ان پیج (index.html) براہِ راست دکھائیں
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+let sock;
+let currentQR = null;
+let isConnected = false;
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('./session');
   const { version } = await fetchLatestBaileysVersion();
 
-  const sock = makeWASocket({
+  sock = makeWASocket({
     version,
     logger,
-    printQRInTerminal: !config.USE_PAIRING_CODE,
+    printQRInTerminal: false, // QR اب ویب پیج پر دکھایا جائے گا، ٹرمینل میں نہیں
     auth: state,
     browser: [config.BOT_NAME, 'Chrome', '1.0.0'],
   });
 
-  // Pairing code login (اگر QR کے بجائے کوڈ سے لاگ ان کرنا ہو)
-  if (config.USE_PAIRING_CODE && !sock.authState.creds.registered) {
-    const phoneNumber = await question(
-      'اپنا واٹس ایپ نمبر country code کے ساتھ درج کریں (مثال: 923001234567): '
-    );
-    const code = await sock.requestPairingCode(phoneNumber.trim());
-    console.log(`\n👉 آپ کا Pairing Code: ${code}\n`);
-  }
-
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    if (qr && !config.USE_PAIRING_CODE) {
-      console.log('\n📱 نیچے دیا گیا QR کوڈ اپنے واٹس ایپ سے سکین کریں:\n');
-      qrcode.generate(qr, { small: true });
+    if (qr) {
+      currentQR = qr;
     }
 
     if (connection === 'close') {
+      isConnected = false;
+      currentQR = null;
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('❌ کنکشن بند ہو گیا۔ دوبارہ کوشش:', shouldReconnect);
@@ -67,6 +55,8 @@ async function startBot() {
         startBot();
       }
     } else if (connection === 'open') {
+      isConnected = true;
+      currentQR = null;
       console.log(`✅ ${config.BOT_NAME} کامیابی سے کنیکٹ ہو گیا ہے!`);
     }
   });
@@ -92,7 +82,6 @@ async function startBot() {
     const command = isCmd
       ? body.slice(config.PREFIX.length).trim().split(/ +/)[0].toLowerCase()
       : '';
-    const args = body.trim().split(/ +/).slice(1);
 
     console.log(`📩 پیغام موصول ہوا [${from}]: ${body}`);
 
@@ -104,9 +93,7 @@ async function startBot() {
           const start = Date.now();
           await sock.sendMessage(from, { text: '🏓 Pong!' }, { quoted: msg });
           const end = Date.now();
-          await sock.sendMessage(from, {
-            text: `⚡ سپیڈ: ${end - start}ms`,
-          });
+          await sock.sendMessage(from, { text: `⚡ سپیڈ: ${end - start}ms` });
           break;
         }
 
@@ -154,8 +141,54 @@ async function startBot() {
       console.error('کمانڈ چلاتے وقت خرابی:', err);
     }
   });
-
-  return sock;
 }
+
+// ---------------- ویب لاگ ان پیج کے API روٹس ----------------
+
+// کنکشن کی موجودہ صورتحال
+app.get('/api/status', (req, res) => {
+  res.json({ connected: isConnected, botName: config.BOT_NAME });
+});
+
+// QR کوڈ (تصویر کی شکل میں) حاصل کرنا
+app.get('/api/qr', async (req, res) => {
+  if (isConnected) return res.json({ connected: true, qr: null });
+  if (!currentQR) return res.json({ connected: false, qr: null });
+  try {
+    const dataUrl = await QRCode.toDataURL(currentQR);
+    res.json({ connected: false, qr: dataUrl });
+  } catch (e) {
+    res.status(500).json({ error: 'QR بنانے میں خرابی ہوئی' });
+  }
+});
+
+// فون نمبر سے Pairing Code حاصل کرنا
+app.post('/api/pair', async (req, res) => {
+  try {
+    if (isConnected) {
+      return res.status(400).json({ error: 'بوٹ پہلے سے کنیکٹ ہے' });
+    }
+    if (!sock) {
+      return res.status(400).json({ error: 'بوٹ ابھی تیار نہیں، تھوڑی دیر بعد کوشش کریں' });
+    }
+    const { number } = req.body;
+    if (!number) {
+      return res.status(400).json({ error: 'نمبر درکار ہے' });
+    }
+    const cleanNumber = number.replace(/[^0-9]/g, '');
+    if (cleanNumber.length < 8) {
+      return res.status(400).json({ error: 'درست نمبر درج کریں (country code کے ساتھ)' });
+    }
+    const code = await sock.requestPairingCode(cleanNumber);
+    res.json({ code });
+  } catch (e) {
+    console.error('Pairing کوڈ کی خرابی:', e);
+    res.status(500).json({ error: 'کوڈ حاصل نہیں ہو سکا، دوبارہ کوشش کریں' });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 ${config.BOT_NAME} لاگ ان پیج یہاں کھلا ہے: http://localhost:${PORT}`);
+});
 
 startBot();

@@ -16,10 +16,6 @@
     "OWNER_NUMBER": {
       "description": "اونر کا واٹس ایپ نمبر (country code کے ساتھ، + کے بغیر)",
       "value": "923000000000"
-    },
-    "USE_PAIRING_CODE": {
-      "description": "true رکھیں اگر pairing code استعمال کرنا ہو، false رکھیں QR کے لیے",
-      "value": "false"
     }
   },
   "formation": {
