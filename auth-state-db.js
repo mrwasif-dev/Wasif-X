@@ -1,100 +1,72 @@
-const { initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
+const {
+  initAuthCreds,
+  BufferJSON,
+  makeCacheableSignalKeyStore,
+} = require('@whiskeysockets/baileys');
 const db = require('./db');
 
 /**
- * MongoDB-backed Baileys authentication state.
+ * Baileys authentication state backed by MongoDB.
  *
- * IMPORTANT:
- * Baileys requires `creds` to always be a valid auth-credentials object.
- * Returning null here causes:
- *   TypeError: Cannot read properties of null (reading 'me')
- *
- * The key store is persisted as well, so a Heroku restart does not lose
- * the Signal keys needed by the linked WhatsApp device.
+ * Important: Baileys uses Buffers extensively for Signal/Noise keys.
+ * Store the auth state as JSON strings using Baileys' BufferJSON replacer
+ * so MongoDB never changes Buffer values into BSON objects. This prevents
+ * Signal "Bad MAC" errors after a Heroku restart.
  */
 async function useMongoAuthState(sessionId) {
   const saved = await db.loadSession(sessionId);
 
-  const storedKeys = saved?.keys ? clone(saved.keys) : {};
+  const creds = saved?.creds
+    ? saved.creds
+    : initAuthCreds();
 
-  const state = {
-    creds: saved?.creds ? decode(saved.creds) : initAuthCreds(),
-    keys: {
-      get: async (type, ids) => {
-        const data = {};
-        const stored = saved?.keys || {};
+  const keyStore = saved?.keys || {};
 
-        for (const id of ids) {
-          const value = stored?.[type]?.[id];
-          if (value !== undefined && value !== null) {
-            data[id] = decode(value);
+  const rawKeys = {
+    get: async (type, ids) => {
+      const data = {};
+      for (const id of ids) {
+        const key = `${type}-${id}`;
+        if (keyStore[key] !== undefined) {
+          data[id] = keyStore[key];
+        }
+      }
+      return data;
+    },
+
+    set: async (data) => {
+      for (const type of Object.keys(data)) {
+        for (const id of Object.keys(data[type])) {
+          const value = data[type][id];
+          const key = `${type}-${id}`;
+
+          if (value === null || value === undefined) {
+            delete keyStore[key];
+          } else {
+            keyStore[key] = value;
           }
         }
+      }
 
-        return data;
-      },
-
-      set: async (data) => {
-        for (const category of Object.keys(data || {})) {
-          if (!storedKeys[category]) storedKeys[category] = {};
-
-          for (const id of Object.keys(data[category] || {})) {
-            const value = data[category][id];
-
-            if (value === null || value === undefined) {
-              delete storedKeys[category][id];
-            } else {
-              storedKeys[category][id] = encode(value);
-            }
-          }
-        }
-
-        await db.saveSessionKeys(sessionId, storedKeys);
-      },
+      await save();
     },
   };
 
-  // Keep the reference used by state.keys.set valid.
-  state.keys._stored = storedKeys;
-
-  const saveCreds = async () => {
-    try {
-      await db.saveSessionCreds(sessionId, encode(state.creds));
-    } catch (err) {
-      console.error('❌ Error saving credentials to MongoDB:', err?.message || err);
-    }
-  };
+  let saving = Promise.resolve();
+  function save() {
+    // Serialize writes so simultaneous creds/key updates cannot overwrite
+    // each other with an older snapshot.
+    saving = saving.then(() => db.saveSession(sessionId, creds, keyStore));
+    return saving;
+  }
 
   return {
-    state,
-    saveCreds,
-    getCreds: () => state.creds,
-    setCreds: (creds) => {
-      state.creds = creds;
+    state: {
+      creds,
+      keys: makeCacheableSignalKeyStore(rawKeys, undefined),
     },
+    saveCreds: save,
   };
-}
-
-function encode(value) {
-  return JSON.stringify(value, BufferJSON.replacer);
-}
-
-function decode(value) {
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value, BufferJSON.reviver);
-  } catch {
-    return value;
-  }
-}
-
-function clone(value) {
-  if (!value) return {};
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return {};
-  }
 }
 
 module.exports = { useMongoAuthState };

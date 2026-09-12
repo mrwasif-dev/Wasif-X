@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
+const { BufferJSON } = require('@whiskeysockets/baileys');
 
 // ============ Session Schema (Baileys Auth) ============
+// Keep Baileys auth data as JSON strings. BufferJSON preserves Buffer values
+// exactly, avoiding BSON type conversions that can cause Signal "Bad MAC"
+// errors when a Heroku dyno restarts.
 const sessionSchema = new mongoose.Schema(
   {
     sessionId: {
@@ -10,8 +14,11 @@ const sessionSchema = new mongoose.Schema(
       index: true,
     },
     jid: String,
-    creds: mongoose.Schema.Types.Mixed, // Baileys credentials
-    keys: mongoose.Schema.Types.Mixed, // Encryption keys
+    credsJson: { type: String, default: null },
+    keysJson: { type: String, default: null },
+    // Legacy fields kept temporarily so an old document can be read once.
+    creds: mongoose.Schema.Types.Mixed,
+    keys: mongoose.Schema.Types.Mixed,
     lastUpdated: {
       type: Date,
       default: Date.now,
@@ -19,9 +26,6 @@ const sessionSchema = new mongoose.Schema(
   },
   { collection: 'sessions', timestamps: true }
 );
-
-// Auto cleanup old sessions (older than 30 days)
-sessionSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });
 
 const Session = mongoose.model('Session', sessionSchema);
 
@@ -114,88 +118,89 @@ async function connectDB() {
   }
 }
 
+
+function getConnectionState() {
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  return states[mongoose.connection.readyState] || 'unknown';
+}
+
 // ============ Session Management Functions ============
 
-
-// Load the complete Baileys authentication state.
+// Load the complete Baileys authentication state
 async function loadSession(sessionId) {
   try {
     const session = await Session.findOne({ sessionId }).lean();
     if (!session) return null;
 
-    return {
-      creds: session.creds || null,
-      keys: session.keys || {},
-    };
+    let creds = null;
+    let keys = {};
+
+    if (session.credsJson) {
+      creds = JSON.parse(session.credsJson, BufferJSON.reviver);
+    } else if (session.creds) {
+      // One-time compatibility with the previous Mixed-field format.
+      creds = JSON.parse(JSON.stringify(session.creds), BufferJSON.reviver);
+    }
+
+    if (session.keysJson) {
+      keys = JSON.parse(session.keysJson, BufferJSON.reviver) || {};
+    } else if (session.keys) {
+      keys = JSON.parse(JSON.stringify(session.keys), BufferJSON.reviver) || {};
+    }
+
+    console.log(`✅ Loaded MongoDB auth state for: ${sessionId}`);
+    return { creds, keys };
   } catch (err) {
-    console.error('Error loading session state:', err);
+    console.error('Error loading auth state:', err);
     return null;
   }
 }
 
-// Save only credentials. Keys are persisted separately because Baileys
-// updates them frequently.
-async function saveSessionKeys(sessionId, keys) {
+// Save the complete Baileys authentication state
+async function saveSession(sessionId, creds, keys) {
   try {
+    const credsJson = JSON.stringify(creds, BufferJSON.replacer);
+    const keysJson = JSON.stringify(keys, BufferJSON.replacer);
+
     await Session.findOneAndUpdate(
       { sessionId },
       {
         $set: {
           sessionId,
-          keys,
+          credsJson,
+          keysJson,
           lastUpdated: new Date(),
         },
+        // Remove the old Mixed auth fields after the first successful save.
+        $unset: {
+          creds: 1,
+          keys: 1,
+        },
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, setDefaultsOnInsert: true }
     );
-    return true;
   } catch (err) {
-    console.error('Error saving session keys:', err);
+    console.error('Error saving auth state:', err);
     throw err;
   }
 }
 
-// Save session credentials to MongoDB
+// Backwards-compatible helpers
 async function saveSessionCreds(sessionId, creds) {
-  try {
-    const session = await Session.findOneAndUpdate(
-      { sessionId },
-      {
-        $set: {
-          sessionId,
-          creds,
-          lastUpdated: new Date(),
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-    return session;
-  } catch (err) {
-    console.error('Error saving session:', err);
-    throw err;
-  }
+  const existing = await loadSession(sessionId);
+  return saveSession(sessionId, creds, existing?.keys || {});
 }
 
-// Load session credentials from MongoDB
 async function loadSessionCreds(sessionId) {
-  try {
-    const session = await Session.findOne({ sessionId });
-    if (session && session.creds) {
-      console.log(`✅ Loaded session credentials for: ${sessionId}`);
-      return session.creds;
-    }
-    return null;
-  } catch (err) {
-    console.error('Error loading session:', err);
-    return null;
-  }
+  const existing = await loadSession(sessionId);
+  return existing?.creds || null;
 }
 
-// Delete session from MongoDB
+// Delete the complete auth session
 async function deleteSession(sessionId) {
   try {
     await Session.deleteOne({ sessionId });
-    console.log(`🗑️  Deleted session: ${sessionId}`);
+    console.log(`🗑️  Deleted MongoDB session: ${sessionId}`);
     return true;
   } catch (err) {
     console.error('Error deleting session:', err);
@@ -304,6 +309,7 @@ async function getMessageLogs(sessionId, limit = 50) {
 module.exports = {
   // Connection
   connectDB,
+  getConnectionState,
   
   // Models
   Session,
@@ -313,8 +319,6 @@ module.exports = {
   // Session functions
   saveSessionCreds,
   loadSessionCreds,
-  loadSession,
-  saveSessionKeys,
   deleteSession,
   
   // Settings functions

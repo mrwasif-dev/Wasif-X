@@ -28,10 +28,52 @@ app.get('/', (req, res) => {
 let sock;
 let currentQR = null;
 let isConnected = false;
-let socketReady = false; // becomes true once the WebSocket connection is actually open
+let connectionState = 'starting';
+let socketReady = false;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+let startInProgress = false;
+let botStartedAt = Date.now();
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function stopSocket() {
+  const oldSock = sock;
+  sock = null;
+  socketReady = false;
+  if (!oldSock) return;
+  try { oldSock.ev.removeAllListeners(); } catch (_) {}
+  try { oldSock.end(undefined); } catch (_) {}
+}
+
+function scheduleReconnect(reason = 'connection closed') {
+  if (reconnectTimer || connectionState === 'logged_out') return;
+  reconnectAttempts += 1;
+  const delay = Math.min(30000, 2000 * Math.pow(2, Math.min(reconnectAttempts - 1, 4)));
+  connectionState = 'reconnecting';
+  console.log(`🔄 Reconnect scheduled in ${delay}ms (${reason})`);
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try { await startBot(); } catch (err) {
+      console.error('❌ Reconnect failed:', err?.stack || err);
+      scheduleReconnect('reconnect attempt failed');
+    }
+  }, delay);
+}
 
 async function startBot() {
+  if (startInProgress) return;
+  startInProgress = true;
   socketReady = false;
+  connectionState = 'connecting';
+  try {
+  if (db.getConnectionState && db.getConnectionState() !== 'connected') {
+    connectionState = 'database_error';
+    scheduleReconnect('MongoDB is not connected');
+    return;
+  }
   
   // Use MongoDB for authentication state (works on Heroku)
   const { useMongoAuthState } = require('./auth-state-db');
@@ -55,7 +97,7 @@ async function startBot() {
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
-    socketReady = true; // the WebSocket has responded, so it's safe to request a pairing code now
+    if (connection === 'open') socketReady = true;
 
     if (qr) {
       currentQR = qr;
@@ -65,21 +107,30 @@ async function startBot() {
       isConnected = false;
       socketReady = false;
       currentQR = null;
-      db.updateConnectionStatus(SESSION_ID, false);
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('❌ Connection closed. Reconnecting:', shouldReconnect);
-      if (shouldReconnect) {
-        startBot();
+      connectionState = 'disconnected';
+      db.updateConnectionStatus(SESSION_ID, false).catch(() => {});
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      if (!shouldReconnect) {
+        connectionState = 'logged_out';
+        reconnectAttempts = 0;
+        console.log('🚪 WhatsApp session logged out. Automatic reconnect disabled.');
+      } else {
+        console.log(`❌ Connection closed (code ${statusCode || 'unknown'}).`);
+        scheduleReconnect('WhatsApp connection closed');
       }
     } else if (connection === 'open') {
       isConnected = true;
+      connectionState = 'connected';
+      reconnectAttempts = 0;
       currentQR = null;
       const jid = sock?.user?.id;
       if (jid) {
-        db.updateConnectionStatus(SESSION_ID, true, jid);
+        db.updateConnectionStatus(SESSION_ID, true, jid).catch(err => console.error('Status update failed:', err.message));
       }
       console.log(`✅ ${config.BOT_NAME} connected successfully!`);
+    } else if (connection === 'connecting') {
+      connectionState = 'connecting';
     }
   });
 
@@ -166,6 +217,15 @@ async function startBot() {
       console.error('Error running command:', err);
     }
   });
+  } catch (err) {
+    isConnected = false;
+    socketReady = false;
+    connectionState = 'error';
+    console.error('❌ Bot startup error:', err?.stack || err);
+    scheduleReconnect('bot startup error');
+  } finally {
+    startInProgress = false;
+  }
 }
 
 // A leftover half-registered session file is the most common cause of
@@ -208,12 +268,17 @@ async function resetSessionAndRestart() {
 app.get('/api/status', async (req, res) => {
   try {
     const settings = await db.getBotSettings(SESSION_ID);
-    res.json({ 
-      connected: isConnected, 
+    const mongoState = db.getConnectionState ? db.getConnectionState() : 'unknown';
+    res.json({
+      connected: isConnected,
+      state: connectionState,
       botName: config.BOT_NAME,
       phoneNumber: settings?.phoneNumber || null,
       lastSync: settings?.lastSync || null,
       sessionId: SESSION_ID,
+      reconnectAttempts,
+      uptimeSeconds: Math.floor((Date.now() - botStartedAt) / 1000),
+      mongodb: mongoState,
     });
   } catch (err) {
     res.json({ connected: isConnected, botName: config.BOT_NAME });
@@ -382,26 +447,37 @@ app.get('/api/health', async (req, res) => {
   res.json({
     server: 'online',
     connected: isConnected,
+    state: connectionState,
     session: SESSION_ID,
-    mongodb: 'checking...',
+    uptimeSeconds: Math.floor((Date.now() - botStartedAt) / 1000),
+    reconnectAttempts,
+    mongodb: db.getConnectionState ? db.getConnectionState() : 'unknown',
   });
 });
 
-// Start server first, then connect to MongoDB, then start Baileys.
-// This prevents the auth-state loader from querying MongoDB before the
-// connection is ready (which could otherwise leave `creds` as null).
+// Start server, database, then WhatsApp. This prevents Baileys from starting with a null auth state.
 app.listen(PORT, async () => {
   console.log(`🌐 ${config.BOT_NAME} login page is live on port ${PORT}`);
-
   const dbConnected = await db.connectDB();
   if (!dbConnected) {
-    console.error('❌ MongoDB is required for the WhatsApp auth session. Bot startup aborted.');
+    console.error('❌ MongoDB is unavailable. WhatsApp startup is paused until MongoDB is reachable.');
+    connectionState = 'database_error';
+    scheduleReconnect('MongoDB unavailable');
     return;
   }
-
-  try {
-    await startBot();
-  } catch (err) {
-    console.error('❌ Failed to start WhatsApp bot:', err?.stack || err);
+  botStartedAt = Date.now();
+  try { await startBot(); } catch (err) {
+    console.error('❌ Initial bot start failed:', err?.stack || err);
+    scheduleReconnect('initial startup failure');
   }
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('🚨 Unhandled promise rejection:', err?.stack || err);
+  scheduleReconnect('unhandled promise rejection');
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('🚨 Uncaught exception:', err?.stack || err);
+  scheduleReconnect('uncaught exception');
 });
