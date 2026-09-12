@@ -39,8 +39,9 @@ async function startBot() {
     logger,
     printQRInTerminal: false,
     auth: state,
-    // Use Android identifier - most compatible with WhatsApp pairing codes
-    browser: Browsers.android('WhatsApp'),
+    // Windows Chrome is most reliable for pairing codes
+    // (Android is not a valid Browsers method in Baileys)
+    browser: Browsers.windows('Chrome'),
     // Disable history sync to avoid stale session data
     syncFullHistory: false,
     // Mark device as mobile app
