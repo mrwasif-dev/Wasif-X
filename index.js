@@ -6,7 +6,7 @@ const QRCode = require('qrcode');
 const {
   default: makeWASocket,
   DisconnectReason,
-  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   Browsers,
 } = require('@whiskeysockets/baileys');
 const P = require('pino');
@@ -82,14 +82,15 @@ async function startBot() {
     const { useMongoAuthState } = require('./auth-state-db');
     const authState = await useMongoAuthState(SESSION_ID);
     const { saveCreds } = authState;
-    const { version } = await fetchLatestBaileysVersion();
+    const { version, isLatest } = await fetchLatestWaWebVersion();
+    console.log(`🌐 WhatsApp Web version: ${version.join('.')} (latest: ${isLatest})`);
 
     const newSock = makeWASocket({
       version,
       logger,
       printQRInTerminal: false,
       auth: authState.state,
-      browser: Browsers.windows('Chrome'),
+      browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false,
       markOnlineOnConnect: true,
     });
@@ -332,53 +333,32 @@ app.post('/api/pair', async (req, res) => {
     // by a stale/half-linked session from a previous attempt
     await resetSessionAndRestart();
 
-    // Pairing code is requested before the connection reaches `open`.
-    // Only wait for the socket object itself to be available.
+    // WhatsApp expects the pairing request after the socket has reached the
+    // initial auth/QR phase. Requesting repeatedly on the same socket can also
+    // invalidate the previous pending pairing state. Wait for the first QR
+    // update, then make exactly ONE request.
     let waited = 0;
-    while (!sock && waited < 10000) {
+    while ((!sock || !currentQR) && waited < 20000) {
       await wait(250);
       waited += 250;
     }
-    if (!sock) return res.status(400).json({ error: 'Bot socket is not ready yet, please try again' });
-
-    // Retry a couple of times - WhatsApp occasionally rejects the very first attempt
-    let lastError;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        console.log(`⏳ Pairing code attempt ${attempt}/3 for ${cleanNumber}...`);
-        const result = await sock.requestPairingCode(cleanNumber);
-        
-        // Extract code from various possible response formats
-        let code;
-        if (typeof result === 'string') {
-          code = result;
-        } else if (result?.pairing_code) {
-          code = result.pairing_code;
-        } else if (result?.code) {
-          code = result.code;
-        } else {
-          throw new Error('Invalid response format from WhatsApp');
-        }
-        
-        if (!code || code.length < 4) {
-          throw new Error('Received invalid code from WhatsApp');
-        }
-        
-        console.log(`✅ Code generated successfully: ${code}`);
-        return res.json({ code });
-      } catch (err) {
-        lastError = err;
-        const errMsg = err?.message || String(err);
-        console.error(`❌ Attempt ${attempt} failed:`, errMsg);
-        if (attempt < 3) {
-          console.log(`⏱️  Waiting 2 seconds before retry...`);
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-      }
+    if (!sock || !currentQR) {
+      return res.status(408).json({ error: 'WhatsApp socket did not become ready for pairing. Please try again.' });
     }
-    
-    console.error(`🚨 All 3 attempts failed. Last error:`, lastError?.message || lastError);
-    throw lastError;
+
+    console.log(`⏳ Requesting one pairing code for ${cleanNumber}...`);
+    const result = await sock.requestPairingCode(cleanNumber);
+
+    let code;
+    if (typeof result === 'string') code = result;
+    else if (result?.pairing_code) code = result.pairing_code;
+    else if (result?.code) code = result.code;
+    else throw new Error('Invalid response format from WhatsApp');
+
+    if (!code || code.length < 4) throw new Error('Received invalid pairing code from WhatsApp');
+
+    console.log(`✅ Pairing code generated successfully: ${code}`);
+    return res.json({ code });
   } catch (e) {
     console.error('🔴 Pairing code error:', e?.message || e);
     const errorMsg = e?.message || String(e);

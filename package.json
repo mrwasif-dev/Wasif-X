@@ -18,7 +18,7 @@
   "author": "Wasif",
   "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@whiskeysockets/baileys": "6.7.24",
     "pino": "^9.3.2",
     "express": "^4.19.2",
     "qrcode": "^1.5.4",

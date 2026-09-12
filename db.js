@@ -95,6 +95,7 @@ const messageLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
+      expires: 7776000,
     },
     isCommand: Boolean,
     command: String,
@@ -102,8 +103,7 @@ const messageLogSchema = new mongoose.Schema(
   { collection: 'messageLogs' }
 );
 
-// Auto cleanup old logs (older than 90 days)
-messageLogSchema.index({ timestamp: 1 }, { expireAfterSeconds: 7776000 });
+// TTL is declared directly on timestamp above to avoid duplicate index warnings.
 
 const MessageLog = mongoose.model('MessageLog', messageLogSchema);
 
