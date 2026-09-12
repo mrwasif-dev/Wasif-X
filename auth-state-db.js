@@ -1,55 +1,48 @@
-const { initAuthCreds, BufferJSON, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const P = require('pino');
+const {
+  initAuthCreds,
+  BufferJSON,
+  makeCacheableSignalKeyStore,
+} = require('@whiskeysockets/baileys');
 const db = require('./db');
 
+const logger = P({ level: 'silent' });
+
 /**
- * Baileys authentication state backed by MongoDB.
- * Keeps both creds and Signal/Noise keys persistent across Heroku restarts.
+ * Baileys auth state stored safely in MongoDB.
+ * Credentials are stored as JSON strings and Signal keys are stored one-by-one,
+ * which preserves Buffer values and avoids MongoDB object conversion/race issues.
  */
 async function useMongoAuthState(sessionId) {
-  const saved = await db.loadSession(sessionId);
+  const savedCreds = await db.loadSessionCreds(sessionId);
+  const creds = savedCreds || initAuthCreds();
 
-  const creds = saved?.creds
-    ? JSON.parse(JSON.stringify(saved.creds), BufferJSON.reviver)
-    : initAuthCreds();
-
-  const keyStore = saved?.keys
-    ? JSON.parse(JSON.stringify(saved.keys), BufferJSON.reviver)
-    : {};
-
-  const rawKeys = {
+  const keys = {
     get: async (type, ids) => {
-      const data = {};
+      const stored = await db.loadAuthKeys(sessionId, type, ids);
+      const result = {};
       for (const id of ids) {
-        const key = `${type}-${id}`;
-        if (keyStore[key] !== undefined) data[id] = keyStore[key];
+        if (stored[id] !== undefined) result[id] = stored[id];
       }
-      return data;
+      return result;
     },
     set: async (data) => {
-      for (const type of Object.keys(data)) {
-        for (const id of Object.keys(data[type])) {
-          const value = data[type][id];
-          const key = `${type}-${id}`;
-          if (value === null || value === undefined) delete keyStore[key];
-          else keyStore[key] = value;
-        }
-      }
-      await save();
+      await db.saveAuthKeys(sessionId, data);
     },
   };
-
-  let saving = Promise.resolve();
-  async function save() {
-    saving = saving.then(() => db.saveSession(sessionId, creds, keyStore));
-    return saving;
-  }
 
   return {
     state: {
       creds,
-      keys: makeCacheableSignalKeyStore(rawKeys, undefined),
+      keys: makeCacheableSignalKeyStore(keys, logger),
     },
-    saveCreds: save,
+    saveCreds: async () => {
+      try {
+        await db.saveSessionCreds(sessionId, creds);
+      } catch (err) {
+        console.error('Error saving credentials to MongoDB:', err?.message || err);
+      }
+    },
   };
 }
 

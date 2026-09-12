@@ -12,7 +12,9 @@ const sessionSchema = new mongoose.Schema(
     },
     jid: String,
     creds: mongoose.Schema.Types.Mixed, // Baileys credentials
-    keys: mongoose.Schema.Types.Mixed, // Baileys Signal/Noise keys
+    // Legacy field kept for compatibility. New Signal keys are stored in AuthKey documents.
+    keys: mongoose.Schema.Types.Mixed,
+    authVersion: { type: Number, default: 2 },
     lastUpdated: {
       type: Date,
       default: Date.now,
@@ -21,9 +23,21 @@ const sessionSchema = new mongoose.Schema(
   { collection: 'sessions', timestamps: true }
 );
 
-// Do not expire WhatsApp sessions automatically. A valid linked session must survive Heroku restarts.
+// WhatsApp auth sessions must NOT expire automatically.
 
 const Session = mongoose.model('Session', sessionSchema);
+
+const authKeySchema = new mongoose.Schema(
+  {
+    sessionId: { type: String, required: true, index: true },
+    type: { type: String, required: true },
+    keyId: { type: String, required: true },
+    value: { type: String, required: true },
+  },
+  { collection: 'authKeys', timestamps: true }
+);
+authKeySchema.index({ sessionId: 1, type: 1, keyId: 1 }, { unique: true });
+const AuthKey = mongoose.model('AuthKey', authKeySchema);
 
 // ============ Bot Settings Schema ============
 const botSettingsSchema = new mongoose.Schema(
@@ -81,6 +95,7 @@ const messageLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
+      index: true,
     },
     isCommand: Boolean,
     command: String,
@@ -114,70 +129,111 @@ async function connectDB() {
   }
 }
 
-
-function getConnectionState() {
-  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-  return states[mongoose.connection.readyState] || 'unknown';
-}
-
 // ============ Session Management Functions ============
 
-// Load the complete Baileys authentication state
-async function loadSession(sessionId) {
-  try {
-    const session = await Session.findOne({ sessionId }).lean();
-    if (!session) return null;
-    console.log(`✅ Loaded MongoDB auth state for: ${sessionId}`);
-    return { creds: session.creds || null, keys: session.keys || {} };
-  } catch (err) {
-    console.error('Error loading auth state:', err);
-    return null;
-  }
+function encode(value) {
+  return JSON.stringify(value, BufferJSON.replacer);
 }
 
-// Save the complete Baileys authentication state
-async function saveSession(sessionId, creds, keys) {
+function decode(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') {
+    // Legacy MongoDB data from the earlier bot version is intentionally not
+    // reused for Signal keys because BSON may have changed Buffer values.
+    return null;
+  }
+  return JSON.parse(value, BufferJSON.reviver);
+}
+
+async function saveSessionCreds(sessionId, creds) {
   try {
-    // Store Baileys buffers as JSON-safe values so MongoDB can restore them exactly.
-    const safeCreds = JSON.parse(JSON.stringify(creds, BufferJSON.replacer));
-    const safeKeys = JSON.parse(JSON.stringify(keys, BufferJSON.replacer));
     await Session.findOneAndUpdate(
       { sessionId },
       {
         $set: {
           sessionId,
-          creds: safeCreds,
-          keys: safeKeys,
+          creds: encode(creds),
+          authVersion: 2,
           lastUpdated: new Date(),
         },
       },
-      { upsert: true, setDefaultsOnInsert: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   } catch (err) {
-    console.error('Error saving auth state:', err);
+    console.error('Error saving session credentials:', err?.message || err);
     throw err;
   }
 }
 
-// Backwards-compatible helpers
-async function saveSessionCreds(sessionId, creds) {
-  const existing = await loadSession(sessionId);
-  return saveSession(sessionId, creds, existing?.keys || {});
-}
-
 async function loadSessionCreds(sessionId) {
-  const existing = await loadSession(sessionId);
-  return existing?.creds || null;
+  try {
+    const session = await Session.findOne({ sessionId }).lean();
+    if (!session?.creds) return null;
+    const creds = decode(session.creds);
+    if (creds) console.log(`✅ Loaded MongoDB credentials for: ${sessionId}`);
+    return creds;
+  } catch (err) {
+    console.error('Error loading session credentials:', err?.message || err);
+    return null;
+  }
 }
 
-// Delete the complete auth session
+async function saveAuthKeys(sessionId, data) {
+  const ops = [];
+  for (const type of Object.keys(data || {})) {
+    for (const keyId of Object.keys(data[type] || {})) {
+      const value = data[type][keyId];
+      if (value === null || value === undefined) {
+        ops.push({ deleteOne: { filter: { sessionId, type, keyId } } });
+      } else {
+        ops.push({
+          updateOne: {
+            filter: { sessionId, type, keyId },
+            update: { $set: { sessionId, type, keyId, value: encode(value) } },
+            upsert: true,
+          },
+        });
+      }
+    }
+  }
+  if (!ops.length) return;
+  try {
+    await AuthKey.bulkWrite(ops, { ordered: false });
+  } catch (err) {
+    console.error('Error saving Signal keys:', err?.message || err);
+    throw err;
+  }
+}
+
+async function loadAuthKeys(sessionId, type, ids) {
+  if (!ids?.length) return {};
+  try {
+    const docs = await AuthKey.find({ sessionId, type, keyId: { $in: ids } }).lean();
+    const result = {};
+    for (const doc of docs) {
+      try {
+        result[doc.keyId] = decode(doc.value);
+      } catch (e) {
+        console.error(`Invalid stored Signal key ${type}/${doc.keyId}; ignoring it.`);
+      }
+    }
+    return result;
+  } catch (err) {
+    console.error('Error loading Signal keys:', err?.message || err);
+    return {};
+  }
+}
+
 async function deleteSession(sessionId) {
   try {
-    await Session.deleteOne({ sessionId });
-    console.log(`🗑️  Deleted MongoDB session: ${sessionId}`);
+    await Promise.all([
+      Session.deleteOne({ sessionId }),
+      AuthKey.deleteMany({ sessionId }),
+    ]);
+    console.log(`🗑️ Deleted MongoDB auth session: ${sessionId}`);
     return true;
   } catch (err) {
-    console.error('Error deleting session:', err);
+    console.error('Error deleting session:', err?.message || err);
     return false;
   }
 }
@@ -283,18 +339,18 @@ async function getMessageLogs(sessionId, limit = 50) {
 module.exports = {
   // Connection
   connectDB,
-  getConnectionState,
   
   // Models
   Session,
+  AuthKey,
   BotSettings,
   MessageLog,
   
   // Session functions
-  saveSession,
-  loadSession,
   saveSessionCreds,
   loadSessionCreds,
+  saveAuthKeys,
+  loadAuthKeys,
   deleteSession,
   
   // Settings functions

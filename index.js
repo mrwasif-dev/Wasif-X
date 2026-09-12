@@ -28,11 +28,12 @@ app.get('/', (req, res) => {
 let sock;
 let currentQR = null;
 let isConnected = false;
-let connectionState = 'starting';
 let socketReady = false;
+let connectionState = 'starting';
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let startInProgress = false;
+let intentionalRestart = false;
 let botStartedAt = Date.now();
 
 function wait(ms) {
@@ -49,14 +50,16 @@ async function stopSocket() {
 }
 
 function scheduleReconnect(reason = 'connection closed') {
-  if (reconnectTimer || connectionState === 'logged_out') return;
+  if (intentionalRestart || reconnectTimer || connectionState === 'logged_out') return;
   reconnectAttempts += 1;
   const delay = Math.min(30000, 2000 * Math.pow(2, Math.min(reconnectAttempts - 1, 4)));
   connectionState = 'reconnecting';
   console.log(`🔄 Reconnect scheduled in ${delay}ms (${reason})`);
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
-    try { await startBot(); } catch (err) {
+    try {
+      await startBot();
+    } catch (err) {
       console.error('❌ Reconnect failed:', err?.stack || err);
       scheduleReconnect('reconnect attempt failed');
     }
@@ -68,78 +71,78 @@ async function startBot() {
   startInProgress = true;
   socketReady = false;
   connectionState = 'connecting';
+
   try {
-  if (db.getConnectionState && db.getConnectionState() !== 'connected') {
-    connectionState = 'database_error';
-    scheduleReconnect('MongoDB is not connected');
-    return;
-  }
-  
-  // Use MongoDB for authentication state (works on Heroku)
-  const { useMongoAuthState } = require('./auth-state-db');
-  const authState = await useMongoAuthState(SESSION_ID);
-  const { saveCreds } = authState;
-  
-  const { version } = await fetchLatestBaileysVersion();
-
-  sock = makeWASocket({
-    version,
-    logger,
-    printQRInTerminal: false,
-    auth: authState.state,
-    // Windows Chrome is most reliable for pairing codes
-    browser: Browsers.windows('Chrome'),
-    // Disable history sync to avoid stale session data
-    syncFullHistory: false,
-    // Mark device as mobile app
-    markOnlineOnConnect: true,
-  });
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (connection === 'open') socketReady = true;
-
-    if (qr) {
-      currentQR = qr;
+    if (db.getConnectionState && db.getConnectionState() !== 'connected') {
+      connectionState = 'database_error';
+      scheduleReconnect('MongoDB is not connected');
+      return;
     }
 
-    if (connection === 'close') {
-      isConnected = false;
-      socketReady = false;
-      currentQR = null;
-      connectionState = 'disconnected';
-      db.updateConnectionStatus(SESSION_ID, false).catch(() => {});
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      if (!shouldReconnect) {
-        connectionState = 'logged_out';
+    const { useMongoAuthState } = require('./auth-state-db');
+    const authState = await useMongoAuthState(SESSION_ID);
+    const { saveCreds } = authState;
+    const { version } = await fetchLatestBaileysVersion();
+
+    const newSock = makeWASocket({
+      version,
+      logger,
+      printQRInTerminal: false,
+      auth: authState.state,
+      browser: Browsers.windows('Chrome'),
+      syncFullHistory: false,
+      markOnlineOnConnect: true,
+    });
+    sock = newSock;
+
+    newSock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      // Baileys emits updates before the socket reaches `open`. Pairing code
+      // must be requested during this phase, so readiness means socket exists.
+      socketReady = true;
+
+      if (qr) currentQR = qr;
+
+      if (connection === 'close') {
+        if (sock !== newSock) return;
+        isConnected = false;
+        socketReady = false;
+        currentQR = null;
+        connectionState = 'disconnected';
+        db.updateConnectionStatus(SESSION_ID, false).catch(() => {});
+
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+
+        if (loggedOut) {
+          connectionState = 'logged_out';
+          reconnectAttempts = 0;
+          console.log('🚪 WhatsApp session logged out. Automatic reconnect disabled.');
+        } else if (!intentionalRestart) {
+          console.log(`❌ Connection closed (code ${statusCode || 'unknown'}).`);
+          scheduleReconnect('WhatsApp connection closed');
+        }
+      } else if (connection === 'open') {
+        if (sock !== newSock) return;
+        isConnected = true;
+        connectionState = 'connected';
         reconnectAttempts = 0;
-        console.log('🚪 WhatsApp session logged out. Automatic reconnect disabled.');
-      } else {
-        console.log(`❌ Connection closed (code ${statusCode || 'unknown'}).`);
-        scheduleReconnect('WhatsApp connection closed');
+        currentQR = null;
+        const jid = newSock?.user?.id;
+        if (jid) db.updateConnectionStatus(SESSION_ID, true, jid).catch(() => {});
+        console.log(`✅ ${config.BOT_NAME} connected successfully!`);
+      } else if (connection === 'connecting') {
+        connectionState = 'connecting';
       }
-    } else if (connection === 'open') {
-      isConnected = true;
-      connectionState = 'connected';
-      reconnectAttempts = 0;
-      currentQR = null;
-      const jid = sock?.user?.id;
-      if (jid) {
-        db.updateConnectionStatus(SESSION_ID, true, jid).catch(err => console.error('Status update failed:', err.message));
-      }
-      console.log(`✅ ${config.BOT_NAME} connected successfully!`);
-    } else if (connection === 'connecting') {
-      connectionState = 'connecting';
-    }
-  });
+    });
 
-  sock.ev.on('creds.update', saveCreds);
-
+    newSock.ev.on('creds.update', saveCreds);
   // Message handling logic
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+  newSock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
+    if (!msg) return;
     if (!msg.message || msg.key.fromMe) return;
 
     const from = msg.key.remoteJid;
@@ -167,9 +170,9 @@ async function startBot() {
       switch (command) {
         case 'ping': {
           const start = Date.now();
-          await sock.sendMessage(from, { text: '🏓 Pong!' }, { quoted: msg });
+          await newSock.sendMessage(from, { text: '🏓 Pong!' }, { quoted: msg });
           const end = Date.now();
-          await sock.sendMessage(from, { text: `⚡ Speed: ${end - start}ms` });
+          await newSock.sendMessage(from, { text: `⚡ Speed: ${end - start}ms` });
           break;
         }
 
@@ -183,12 +186,12 @@ async function startBot() {
 │ ${config.PREFIX}owner  - Get owner info
 │
 ╰────────────────`;
-          await sock.sendMessage(from, { text: menuText }, { quoted: msg });
+          await newSock.sendMessage(from, { text: menuText }, { quoted: msg });
           break;
         }
 
         case 'alive': {
-          await sock.sendMessage(
+          await newSock.sendMessage(
             from,
             { text: `✅ *${config.BOT_NAME}* is online and active!` },
             { quoted: msg }
@@ -197,7 +200,7 @@ async function startBot() {
         }
 
         case 'owner': {
-          await sock.sendMessage(
+          await newSock.sendMessage(
             from,
             { text: `👤 Owner number: wa.me/${config.OWNER_NUMBER}` },
             { quoted: msg }
@@ -206,7 +209,7 @@ async function startBot() {
         }
 
         default: {
-          await sock.sendMessage(
+          await newSock.sendMessage(
             from,
             { text: `❓ Unknown command. Type *${config.PREFIX}menu* to see the list.` },
             { quoted: msg }
@@ -232,33 +235,26 @@ async function startBot() {
 // WhatsApp rejecting a pairing code as "incorrect" - wipe it and start a
 // completely clean socket right before generating a new code.
 async function resetSessionAndRestart() {
-  try {
-    if (sock) {
-      sock.ev.removeAllListeners();
-      try {
-        sock.end(undefined);
-      } catch (e) {
-        // ignore
-      }
-    }
-  } catch (e) {
-    // ignore
+  intentionalRestart = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
+  reconnectAttempts = 0;
   try {
-    // Remove old file-based session if it exists
+    await stopSocket();
+  } catch (_) {}
+
+  try {
     fs.rmSync(path.join(__dirname, 'session'), { recursive: true, force: true });
-  } catch (e) {
-    // Session folder might not exist on Heroku, that's okay
-  }
-  
-  // Clear MongoDB session
-  try {
-    await db.deleteSession(SESSION_ID);
-    console.log('🗑️  MongoDB session cleared');
-  } catch (e) {
-    console.error('Warning: Could not clear MongoDB session:', e?.message || e);
-  }
-  
+  } catch (_) {}
+
+  await db.deleteSession(SESSION_ID);
+  currentQR = null;
+  isConnected = false;
+  connectionState = 'connecting';
+
+  intentionalRestart = false;
   await startBot();
 }
 
@@ -268,7 +264,6 @@ async function resetSessionAndRestart() {
 app.get('/api/status', async (req, res) => {
   try {
     const settings = await db.getBotSettings(SESSION_ID);
-    const mongoState = db.getConnectionState ? db.getConnectionState() : 'unknown';
     res.json({
       connected: isConnected,
       state: connectionState,
@@ -278,7 +273,7 @@ app.get('/api/status', async (req, res) => {
       sessionId: SESSION_ID,
       reconnectAttempts,
       uptimeSeconds: Math.floor((Date.now() - botStartedAt) / 1000),
-      mongodb: mongoState,
+      mongodb: db.getConnectionState ? db.getConnectionState() : 'unknown',
     });
   } catch (err) {
     res.json({ connected: isConnected, botName: config.BOT_NAME });
@@ -333,15 +328,14 @@ app.post('/api/pair', async (req, res) => {
     // by a stale/half-linked session from a previous attempt
     await resetSessionAndRestart();
 
-    // Wait for the WebSocket connection to actually be open before requesting a code
+    // Pairing code is requested before the connection reaches `open`.
+    // Only wait for the socket object itself to be available.
     let waited = 0;
-    while (!socketReady && waited < 15000) {
-      await new Promise((r) => setTimeout(r, 300));
-      waited += 300;
+    while (!sock && waited < 10000) {
+      await wait(250);
+      waited += 250;
     }
-    if (!socketReady) {
-      return res.status(400).json({ error: 'Connection not ready yet, please try again' });
-    }
+    if (!sock) return res.status(400).json({ error: 'Bot socket is not ready yet, please try again' });
 
     // Retry a couple of times - WhatsApp occasionally rejects the very first attempt
     let lastError;
@@ -455,29 +449,25 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// Start server, database, then WhatsApp. This prevents Baileys from starting with a null auth state.
+// Start server, then MongoDB, then WhatsApp.
 app.listen(PORT, async () => {
   console.log(`🌐 ${config.BOT_NAME} login page is live on port ${PORT}`);
   const dbConnected = await db.connectDB();
   if (!dbConnected) {
-    console.error('❌ MongoDB is unavailable. WhatsApp startup is paused until MongoDB is reachable.');
+    console.error('❌ MongoDB is unavailable. WhatsApp startup is paused.');
     connectionState = 'database_error';
     scheduleReconnect('MongoDB unavailable');
     return;
   }
   botStartedAt = Date.now();
-  try { await startBot(); } catch (err) {
-    console.error('❌ Initial bot start failed:', err?.stack || err);
-    scheduleReconnect('initial startup failure');
-  }
+  await startBot();
 });
 
+// Never let one rejected promise take down the whole bot process.
 process.on('unhandledRejection', (err) => {
   console.error('🚨 Unhandled promise rejection:', err?.stack || err);
-  scheduleReconnect('unhandled promise rejection');
 });
 
 process.on('uncaughtException', (err) => {
   console.error('🚨 Uncaught exception:', err?.stack || err);
-  scheduleReconnect('uncaught exception');
 });
